@@ -75,7 +75,6 @@
 	 * set by the board file), enable TLMM 60. Same wiring as the 1520.
 	 * Supplies are not in the DSDT: L22 (3.0 V) and L6 (1.8 V, I2C pull-up)
 	 * as the 1520 and the mainline port use them.
-	 * The 930 has on-screen navigation keys: no button map.
 	 */
 	i2c@f9924000 {
 		synaptics@4b {
@@ -93,6 +92,24 @@
 			 * from F11/F12 (Android scales it to the panel).
 			 */
 			synaptics,i2c-pull-up;
+			/*
+			 * Capacitive keys below the panel (F1A 0D buttons):
+			 * the Windows touch settings of the 930
+			 * (martini_SynapticsTouch.inf) list Back, Start and
+			 * Search on their own receive electrodes
+			 * (RxElectrodeMaskButtons 0x38000000), with the same
+			 * button order (FF BackButton 1, StartButton 0,
+			 * SearchButton 2) as the 1520 registry, where F1A
+			 * buttons 0-2 are back, start, search on the phone.
+			 * Mapped as on bandit: the driver keeps 8-bit codes,
+			 * so search is KEY_MENU, made app switch by the key
+			 * layout; 0dbutton turns the keys off for the
+			 * navigation bar.
+			 * The same settings enable the wakeup gesture
+			 * (WakeupGestureSupported, EnableWakeupGesture), so the
+			 * wake_gesture switch (double tap to wake) applies.
+			 */
+			synaptics,button-map = <158 172 139>;
 		};
 	};
 
@@ -407,10 +424,9 @@
 /*
  * LEDs: msm-pm8941.dtsi declares the qcom,leds-qpnp peripherals without
  * child nodes, so every probe fails with -ECHILD. The 930 panel is AMOLED
- * (brightness through DCS, no WLED) and it has no capacitive keys (no
- * keypad backlight).
+ * (brightness through DCS, no WLED).
  * TODO(martini): camera flash/torch and any notification LED from the
- * DSDT; all PM8941 LED blocks are off.
+ * DSDT; all PM8941 LED blocks but KPDBL (below) are plainly off.
  */
 &pm8941_lsid1 {
 	qcom,leds@d000 {
@@ -467,8 +483,71 @@
 	qcom,leds@e100 {
 		status = "disabled";
 	};
+	/*
+	 * Capacitive key backlight. The 930 has three LEDs under the keys
+	 * (touch settings: ButtonBacklights LedCount 3, LedIndexList 0-2, on
+	 * below 100 lux) and its panel driver (oempanel.sys) lights them
+	 * through the Qualcomm HWN LED driver (qchwnled, SPMI), as on the
+	 * 1520, where they are the PM8941 KPDBL rows on PWM channels 8-11
+	 * (bandit 23b5274d, seen working). Which rows the 930 uses, and their
+	 * current, are in the ACPI HWN LED device (\_SB.HWN0, QCOM0D50,
+	 * method HWNL, package CFG0), not in the driver packages.
+	 * TODO(martini): compare \_SB.HWN0.HWNL of the 930 DSDT with the 1520
+	 * one; if they match, set this node to "okay" (rows as on bandit,
+	 * already described) and config_deviceSupportsButtonBrightnessControl
+	 * to 2 in the device tree.
+	 */
 	qcom,leds@e200 {
 		status = "disabled";
+
+		qcom,kpdbl1 {
+			label = "kpdbl";
+			linux,name = "kpdbl-pwm-1";
+			qcom,mode = "pwm";
+			qcom,pwm-channel = <8>;
+			qcom,pwm-us = <1000>;
+			qcom,id = <7>;
+			qcom,max-current = <20>;
+			qcom,row-id = <0>;
+			qcom,row-src-en;
+			qcom,always-on;
+		};
+
+		qcom,kpdbl2 {
+			label = "kpdbl";
+			linux,name = "kpdbl-pwm-2";
+			qcom,mode = "pwm";
+			qcom,pwm-channel = <9>;
+			qcom,pwm-us = <1000>;
+			qcom,id = <7>;
+			qcom,max-current = <20>;
+			qcom,row-id = <1>;
+			qcom,row-src-en;
+		};
+
+		qcom,kpdbl3 {
+			label = "kpdbl";
+			linux,name = "kpdbl-pwm-3";
+			qcom,mode = "pwm";
+			qcom,pwm-channel = <10>;
+			qcom,pwm-us = <1000>;
+			qcom,id = <7>;
+			qcom,max-current = <20>;
+			qcom,row-id = <2>;
+			qcom,row-src-en;
+		};
+
+		qcom,kpdbl4 {
+			label = "kpdbl";
+			linux,name = "kpdbl-pwm-4";
+			qcom,mode = "pwm";
+			qcom,pwm-channel = <11>;
+			qcom,pwm-us = <1000>;
+			qcom,id = <7>;
+			qcom,max-current = <20>;
+			qcom,row-id = <3>;
+			qcom,row-src-en;
+		};
 	};
 };
 
