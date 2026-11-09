@@ -763,7 +763,11 @@
  *    its on sequence ends with 51 ff; the 17.1 kernel capped the level
  *    at 128, the XML init value;
  *  - Samsung panel (oempanel.sys string), consistent with the Samsung
- *    level 2 key F0 5A 5A of the init sequence.
+ *    level 2 key F0 5A 5A of the init sequence;
+ *  - the "Aurora" (display id 0xc1) properties built by oempanel.sys
+ *    list the porches h 20/30/46 (pulse/back/front) and v 1/2/13, the
+ *    17.1 values below, and mark the panel as video mode without TE;
+ *  - doze (Windows "Glance"): see the doze commands below.
  * The PHY is kept as programmed by the UEFI (nokia,keep-firmware-phy):
  * the PHY timings below are not written. With nokia,keep-firmware-timing
  * the DSI video mode setup (traffic mode, LP states, lanes, t-clk, EoT,
@@ -836,6 +840,34 @@
 				05 01 00 00 78 00 02 10 00];
 		qcom,mdss-dsi-on-command-state = "dsi_lp_mode";
 		qcom,mdss-dsi-off-command-state = "dsi_hs_mode";
+		/*
+		 * Doze (ambient display) with the MDP still streaming: the
+		 * Glance screen sequences of oempanel.sys for the Aurora panel
+		 * (default branch of its screen saver entry and exit, all
+		 * commands in HS), without the parts Android does not need:
+		 * entry is display off, 17 ms, idle mode on (39), brightness
+		 * control without dimming (53 24), display on; Windows also
+		 * sends a DCS nop first, hands its own Glance image to the
+		 * display driver, sets a partial area (12, 30) around it and
+		 * the low power level (51, at most 30 nits in its tables,
+		 * never below 0x0a): here Android draws the picture and sets
+		 * the doze brightness itself. Exit is display off, 67 ms,
+		 * normal mode on (13), idle mode off (38), 5 ms (Windows sends
+		 * 13 and 38 twice), dimming back on as in the init (53 2c),
+		 * display on. Only sent when Android asks for the doze state;
+		 * /sys/module/mdss_fb/parameters/video_doze = 0 skips them.
+		 */
+		nokia,mdss-dsi-doze-on-command = [05 01 00 00 11 00 02 28 00
+				05 01 00 00 00 00 02 39 00
+				15 01 00 00 00 00 02 53 24
+				05 01 00 00 00 00 02 29 00];
+		nokia,mdss-dsi-doze-off-command = [05 01 00 00 43 00 02 28 00
+				05 01 00 00 00 00 02 13 00
+				05 01 00 00 05 00 02 38 00
+				15 01 00 00 00 00 02 53 2c
+				05 01 00 00 00 00 02 29 00];
+		nokia,mdss-dsi-doze-on-command-state = "dsi_hs_mode";
+		nokia,mdss-dsi-doze-off-command-state = "dsi_hs_mode";
 		qcom,mdss-dsi-bl-pmic-control-type = "bl_ctrl_dcs";
 		/* DCS 0x51 range 1..255 (Windows panel driver) */
 		qcom,mdss-dsi-bl-min-level = <1>;
