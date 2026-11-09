@@ -416,8 +416,10 @@ static struct msm_gpiomux_config bandit_touch_configs[] __initdata = {
 /*
  * Lumia 1520 sensor buses (BLSP1 QUP3, BLSP2 QUP6): the UEFI leaves these
  * pins unconfigured too. Function 3 is I2C, as for the other BLSP groups.
+ * The Lumia 930 has its light/proximity sensor on BLSP1 QUP3 as well (stock
+ * SSDT QPDS_APS), so that bus is shared by both boards.
  */
-static struct msm_gpiomux_config bandit_sensor_i2c_configs[] __initdata = {
+static struct msm_gpiomux_config lumia_als_i2c_configs[] __initdata = {
 	{
 		.gpio      = 10,		/* BLSP1 QUP3 I2C_DAT */
 		.settings = {
@@ -432,6 +434,9 @@ static struct msm_gpiomux_config bandit_sensor_i2c_configs[] __initdata = {
 			[GPIOMUX_SUSPENDED] = &gpio_i2c_config,
 		},
 	},
+};
+
+static struct msm_gpiomux_config bandit_sensor_i2c_configs[] __initdata = {
 	{
 		.gpio      = 87,		/* BLSP2 QUP6 I2C_DAT */
 		.settings = {
@@ -1689,21 +1694,18 @@ void __init msm_8974_init_gpiomux(void)
 		msm_tlmm_misc_reg_write(TLMM_SPARE_REG, 0xf);
 
 	/*
-	 * Nokia Lumia 1520: the MTP pin tables do not describe this board.
+	 * Nokia Lumia 1520/930: the MTP pin tables do not describe them.
 	 * Keep the pin configuration left by the UEFI, except the touch bus
 	 * and lines and the WCNSS 5-wire link (left unconfigured by the UEFI)
 	 * and the panel TE pin.
 	 */
 	if (msm_tz_restricted()) {
+		/*
+		 * Same touch wiring on the 1520 and the 930 (stock DSDT:
+		 * BLSP1 QUP2, enable GPIO 60, interrupt GPIO 61 with pull-up).
+		 */
 		msm_gpiomux_install(bandit_touch_configs,
 				ARRAY_SIZE(bandit_touch_configs));
-		/*
-		 * Panel TE on the dedicated MDP_VSYNC_P pin (GPIO 12, function
-		 * 1), as the stock panel configuration uses it
-		 * (DSITEUsingDedicatedTEPin).
-		 */
-		msm_gpiomux_install(msm_lcd_te_configs,
-				ARRAY_SIZE(msm_lcd_te_configs));
 		/*
 		 * WCNSS 5-wire link to the iris RF chip (GPIO 36-40): Windows
 		 * muxes it at run time through PEP (RIVA, TLMMGPIO 0x24-0x28,
@@ -1711,14 +1713,29 @@ void __init msm_8974_init_gpiomux(void)
 		 */
 		msm_gpiomux_install(wcnss_5wire_interface,
 				ARRAY_SIZE(wcnss_5wire_interface));
-		msm_gpiomux_install(bandit_sensor_i2c_configs,
-				ARRAY_SIZE(bandit_sensor_i2c_configs));
+		msm_gpiomux_install(lumia_als_i2c_configs,
+				ARRAY_SIZE(lumia_als_i2c_configs));
+		/*
+		 * Loudspeaker amplifier (TAS2552 at 0x40 on BLSP1 QUP5) and its
+		 * secondary MI2S link: the same on both boards.
+		 */
 		msm_gpiomux_install(bandit_sec_mi2s_configs,
 				ARRAY_SIZE(bandit_sec_mi2s_configs));
 		msm_gpiomux_install(bandit_i2c5_configs,
 				ARRAY_SIZE(bandit_i2c5_configs));
-		msm_gpiomux_install(bandit_nfc_configs,
-				ARRAY_SIZE(bandit_nfc_configs));
+		if (of_machine_is_compatible("nokia,bandit")) {
+			/*
+			 * Panel TE on the dedicated MDP_VSYNC_P pin (GPIO 12,
+			 * function 1), as the stock panel configuration uses
+			 * it (DSITEUsingDedicatedTEPin).
+			 */
+			msm_gpiomux_install(msm_lcd_te_configs,
+					ARRAY_SIZE(msm_lcd_te_configs));
+			msm_gpiomux_install(bandit_sensor_i2c_configs,
+					ARRAY_SIZE(bandit_sensor_i2c_configs));
+			msm_gpiomux_install(bandit_nfc_configs,
+					ARRAY_SIZE(bandit_nfc_configs));
+		}
 		pr_info("%s: keeping firmware pin configuration\n", __func__);
 		return;
 	}
