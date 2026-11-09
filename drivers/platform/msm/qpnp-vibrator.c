@@ -19,6 +19,8 @@
 #include <linux/hrtimer.h>
 #include <linux/of_device.h>
 #include <linux/spmi.h>
+#include <linux/gpio.h>
+#include <linux/of_gpio.h>
 
 #include <linux/qpnp/vibrator.h>
 #include "../../staging/android/timed_output.h"
@@ -49,6 +51,7 @@ struct qpnp_vib {
 	int vtg_level;
 	int vtg_default;
 	int timeout;
+	int en_gpio;	/* optional external enable (motor driver), or -1 */
 	spinlock_t lock;
 };
 
@@ -207,6 +210,9 @@ static int qpnp_vib_set(struct qpnp_vib *vib, int on)
 	int rc;
 	u8 val;
 
+	if (gpio_is_valid(vib->en_gpio))
+		gpio_set_value(vib->en_gpio, !!on);
+
 	if (on) {
 		val = vib->reg_vtg_ctl;
 		val &= ~QPNP_VIB_VTG_SET_MASK;
@@ -318,6 +324,27 @@ static int __devinit qpnp_vibrator_probe(struct spmi_device *spmi)
 		return -ENOMEM;
 
 	vib->spmi = spmi;
+
+	/*
+	 * Optional enable line of an external motor driver between the
+	 * PMIC output and the motor (Lumia 930: PM8941 GPIO 8, VIBRA_AMP_EN).
+	 */
+	vib->en_gpio = of_get_named_gpio(spmi->dev.of_node,
+					 "qcom,vib-en-gpio", 0);
+	if (gpio_is_valid(vib->en_gpio)) {
+		rc = devm_gpio_request(&spmi->dev, vib->en_gpio, "vib_en");
+		if (!rc)
+			rc = gpio_direction_output(vib->en_gpio, 0);
+		if (rc) {
+			if (rc != -EPROBE_DEFER)
+				dev_err(&spmi->dev,
+					"Unable to request enable gpio: %d\n",
+					rc);
+			return rc;
+		}
+	} else if (vib->en_gpio == -EPROBE_DEFER) {
+		return -EPROBE_DEFER;
+	}
 
 	vib->timeout = QPNP_VIB_DEFAULT_TIMEOUT;
 	rc = of_property_read_u32(spmi->dev.of_node,
