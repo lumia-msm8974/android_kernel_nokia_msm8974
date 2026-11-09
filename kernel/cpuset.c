@@ -1383,6 +1383,26 @@ static nodemask_t cpuset_attach_nodemask_from;
 static nodemask_t cpuset_attach_nodemask_to;
 
 /* Called by cgroups to determine if a cpuset is usable; cgroup_mutex held */
+/*
+ * Android moves the tasks of every app between cpusets from system_server
+ * (uid system, CAP_SYS_NICE): allow it as for the cpu cgroup.
+ */
+static int cpuset_allow_attach(struct cgroup *cgrp, struct cgroup_taskset *tset)
+{
+	const struct cred *cred = current_cred(), *tcred;
+	struct task_struct *task;
+
+	cgroup_taskset_for_each(task, cgrp, tset) {
+		tcred = __task_cred(task);
+
+		if ((current != task) && !capable(CAP_SYS_NICE) &&
+		    cred->euid != tcred->uid && cred->euid != tcred->suid)
+			return -EACCES;
+	}
+
+	return 0;
+}
+
 static int cpuset_can_attach(struct cgroup *cgrp, struct cgroup_taskset *tset)
 {
 	struct cpuset *cs = cgroup_cs(cgrp);
@@ -1896,6 +1916,7 @@ struct cgroup_subsys cpuset_subsys = {
 	.name = "cpuset",
 	.create = cpuset_create,
 	.destroy = cpuset_destroy,
+	.allow_attach = cpuset_allow_attach,
 	.can_attach = cpuset_can_attach,
 	.attach = cpuset_attach,
 	.populate = cpuset_populate,
