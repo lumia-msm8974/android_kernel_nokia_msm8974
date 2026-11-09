@@ -1,0 +1,27 @@
+/*
+ * Nokia Lumia 930 (martini): MSM8974 v2.2 (8974AB), PM8941 + PM8841.
+ *
+ * Copyright (c) 2026, Lorenzo Giannoccaro.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 and
+ * only version 2 as published by the Free Software Foundation.
+ */
+
+/dts-v1/;
+
+/include/ "msm8974-v2.2.dtsi"
+/include/ "msm8974-martini/msm8974-martini.dtsi"
+
+/ {
+	model = "Nokia Lumia 930";
+	compatible = "nokia,martini", "qcom,msm8974";
+	/*
+	 * Appended as the only DTB of zImage-dtb: lk1st selects a single
+	 * appended DTB even when the ids below do not match the board.
+	 * Chip 126 (MSM8974), platform 0x96 and v2.2 as in the lk2nd martini
+	 * device tree (<126 0x96 0x20002 0xb>, subtype dropped: this LK
+	 * parses three cells). To confirm from the lk1st log of a real 930.
+	 */
+	qcom,msm-id = <126 0x96 0x20002>;
+};

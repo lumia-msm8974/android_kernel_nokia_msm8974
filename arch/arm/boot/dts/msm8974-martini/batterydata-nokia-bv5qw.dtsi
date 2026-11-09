@@ -1,0 +1,111 @@
+/*
+ * Nokia BV-5QW (Lumia 930), BMS battery profile.
+ *
+ * Copyright (c) 2026, Lorenzo Giannoccaro.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 and
+ * only version 2 as published by the Free Software Foundation.
+ *
+ * Tables of the Nokia BATTERY.PROVISION characterization of the BV-5QW
+ * (dated 2013-05-27), as converted for the LineageOS 17.1 Lumia 930 kernel
+ * (bms-batterydata-bv-5qw.c): FCC is the rated minimum capacity, the OCV
+ * table is a 10 mA discharge and the temperature axes are the original
+ * ones. Rewritten here in the device tree format of this kernel.
+ * Not verified on a phone with this kernel.
+ */
+
+qcom,nokia-bv5qw-data {
+	qcom,fcc-mah = <2420>;
+	qcom,default-rbatt-mohm = <132>;
+	qcom,rbatt-capacitive-mohm = <0>;
+	qcom,flat-ocv-threshold-uv = <3800000>;
+	/* characterization ceiling; the charger stops lower (see the board) */
+	qcom,max-voltage-uv = <4350000>;
+	qcom,v-cutoff-uv = <3400000>;
+	qcom,chg-term-ua = <100000>;
+	qcom,batt-id-kohm = <0>;	/* only profile: picked whatever the ID */
+
+	qcom,fcc-temp-lut {
+		qcom,lut-col-legend = <(-20) (-10) 0 23 45 70>;
+		qcom,lut-data = <2420 2420 2420 2420 2420 2420>;
+	};
+
+	qcom,pc-temp-ocv-lut {
+		qcom,lut-col-legend = <(-20) (-10) 0 23 45 70>;
+		qcom,lut-row-legend = <100 95 90 85 80>,
+				<75 70 65 60 55>,
+				<50 45 40 35 30>,
+				<25 20 15 10 9>,
+				<8 7 6 5 4>,
+				<3 2 1 0>;
+		qcom,lut-data = <4327 4326 4326 4320 4316 4297>,
+				<4212 4248 4256 4257 4253 4222>,
+				<4158 4194 4202 4200 4195 4163>,
+				<4107 4141 4149 4145 4141 4108>,
+				<4056 4088 4094 4092 4088 4059>,
+				<4008 4050 4058 4053 4041 4014>,
+				<3927 3963 3977 3983 3994 3972>,
+				<3884 3925 3943 3958 3955 3935>,
+				<3854 3894 3912 3922 3920 3891>,
+				<3825 3851 3861 3867 3864 3848>,
+				<3802 3825 3832 3834 3833 3823>,
+				<3782 3804 3811 3813 3811 3803>,
+				<3768 3789 3795 3796 3794 3787>,
+				<3759 3778 3783 3784 3781 3773>,
+				<3749 3773 3777 3773 3769 3743>,
+				<3734 3766 3773 3762 3746 3724>,
+				<3709 3751 3757 3743 3728 3704>,
+				<3672 3715 3722 3711 3696 3666>,
+				<3643 3691 3697 3688 3675 3658>,
+				<3637 3689 3695 3687 3674 3656>,
+				<3629 3687 3694 3686 3673 3653>,
+				<3619 3684 3693 3684 3671 3648>,
+				<3604 3679 3689 3680 3667 3633>,
+				<3581 3670 3682 3668 3651 3604>,
+				<3546 3645 3657 3632 3611 3562>,
+				<3496 3590 3604 3574 3553 3513>,
+				<3422 3515 3524 3502 3481 3438>,
+				<3305 3403 3411 3389 3370 3323>,
+				<3100 3100 3100 3100 3100 3100>;
+	};
+
+	qcom,rbatt-sf-lut {
+		qcom,lut-col-legend = <(-10) 0 23 40 60>;
+		qcom,lut-row-legend = <100 95 90 85 80>,
+				<75 70 65 60 55>,
+				<50 45 40 35 30>,
+				<25 20 15 10 9>,
+				<8 7 6 5 4>,
+				<3 2 1 0>;
+		qcom,lut-data = <223 197 100 88 85>,
+				<373 249 103 88 85>,
+				<349 233 105 89 85>,
+				<345 235 98 88 86>,
+				<338 214 98 89 86>,
+				<345 211 100 88 86>,
+				<351 211 100 91 88>,
+				<355 210 100 88 88>,
+				<364 213 97 88 88>,
+				<377 208 97 86 85>,
+				<396 219 97 86 83>,
+				<423 220 98 86 85>,
+				<449 235 97 86 85>,
+				<476 247 98 86 85>,
+				<501 269 98 88 83>,
+				<536 305 98 88 85>,
+				<565 342 100 86 85>,
+				<598 393 100 86 85>,
+				<640 451 103 88 86>,
+				<648 474 105 88 86>,
+				<653 486 107 89 88>,
+				<667 505 105 89 88>,
+				<675 517 108 91 88>,
+				<681 546 108 91 88>,
+				<692 565 108 89 88>,
+				<705 587 111 91 86>,
+				<712 606 113 89 91>,
+				<720 626 122 92 89>,
+				<739 655 147 105 97>;
+	};
+};
