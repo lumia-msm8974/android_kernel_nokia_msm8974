@@ -650,10 +650,26 @@
 /*
  * Panel: 5" 1080x1920 AMOLED, DSI video mode (burst), 4 lanes, 60 Hz,
  * brightness through DCS (0x51), reset on PM8941 GPIO 19 (base DSI node).
- * Parameters and command sequences from the 17.1 Lumia 930 kernel
+ * Timings, lanes, PHY and command sequences from the 17.1 Lumia 930 kernel
  * (dsi-panel-martini-amoled-dsi0-video.dtsi), converted to the bindings of
  * this kernel. The PHY is kept as programmed by the UEFI
  * (nokia,keep-firmware-phy), so the PHY timings are not written.
+ * The Windows driver packages of the 930 do not carry the panel timings:
+ * oempanel.inf/oempanel.sys (ACPI\NOKIA_PANEL) are the generic Nokia panel
+ * driver (brightness, ESD check, colour settings; the same INF as other
+ * 8974 Lumias), oled.inf only sets a taskbar option. On the 1520 the
+ * timings and DSI sequences are in the panel XML returned by the ACPI
+ * NOKIA_PANEL device. The Windows data used here:
+ *  - physical size 62.00 x 115.00 mm, from the touch settings
+ *    (DisplayWidth10um 0x1838, DisplayHeight10um 0x2cec, 1080x1920);
+ *    the 17.1 kernel had 65 mm for the width;
+ *  - DCS brightness 0..255: oempanel.sys logs "Brightness: %u/255" and
+ *    the on sequence ends with 51 ff; the 17.1 kernel capped the level
+ *    at 128, half of the range, without a stated reason;
+ *  - Samsung panel (oempanel.sys string), consistent with the Samsung
+ *    level 2 key F0 5A 5A of the init sequence.
+ * TODO(martini): check timings, porches and sequences against the panel
+ * XML of the 930 ACPI tables (NOKIA_PANEL) before switching to MDSS.
  * Only used once MDSS is enabled above.
  */
 &mdss_mdp {
@@ -668,7 +684,7 @@
 		qcom,mdss-dsi-stream = <0>;
 		qcom,mdss-dsi-panel-width = <1080>;
 		qcom,mdss-dsi-panel-height = <1920>;
-		qcom,mdss-pan-physical-width-dimension = <65>;
+		qcom,mdss-pan-physical-width-dimension = <62>;
 		qcom,mdss-pan-physical-height-dimension = <115>;
 		qcom,mdss-dsi-h-back-porch = <30>;
 		qcom,mdss-dsi-h-pulse-width = <20>;
@@ -719,9 +735,9 @@
 		qcom,mdss-dsi-on-command-state = "dsi_lp_mode";
 		qcom,mdss-dsi-off-command-state = "dsi_hs_mode";
 		qcom,mdss-dsi-bl-pmic-control-type = "bl_ctrl_dcs";
-		/* 1..128 as in the 17.1 kernel (DCS 0x51 goes to 255) */
+		/* DCS 0x51 range 1..255 (Windows panel driver) */
 		qcom,mdss-dsi-bl-min-level = <1>;
-		qcom,mdss-dsi-bl-max-level = <128>;
+		qcom,mdss-dsi-bl-max-level = <255>;
 	};
 };
 
