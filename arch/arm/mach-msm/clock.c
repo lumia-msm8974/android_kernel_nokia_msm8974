@@ -24,6 +24,7 @@
 #include <linux/list.h>
 #include <linux/regulator/consumer.h>
 #include <linux/mutex.h>
+#include <linux/of.h>
 #include <trace/events/power.h>
 #include <mach/tz-restricted.h>
 #include <mach/clk-provider.h>
@@ -814,7 +815,7 @@ int __init msm_clock_init(struct clock_init_data *data)
 }
 
 /*
- * Firmware boot (Lumia 1520): the display clocks have an owner, the MDSS
+ * Firmware boot (Lumia 1520/930): the display clocks have an owner, the MDSS
  * driver, which takes its own votes while the panel is on (continuous
  * splash included). Drop only the firmware's vote on them, so that with the
  * screen off the MDP, DSI link clocks and DSI PLL really stop. The DSI PLL
@@ -837,10 +838,24 @@ static const char * const display_handoff_clks[] __initconst = {
 static void __init release_display_handoff(void)
 {
 	struct handoff_clk *h, *h_temp;
+	struct device_node *np;
 	int i, n = 0;
 
 	if (!release_display_clocks)
 		return;
+
+	/*
+	 * Without MDSS the screen is the UEFI pipe shown through
+	 * simple-framebuffer: nothing would vote for these clocks again.
+	 */
+	np = of_find_compatible_node(NULL, NULL, "simple-framebuffer");
+	if (np && of_device_is_available(np)) {
+		of_node_put(np);
+		pr_info("%s: simple-framebuffer in use, display clocks kept\n",
+			__func__);
+		return;
+	}
+	of_node_put(np);
 
 	list_for_each_entry_safe(h, h_temp, &handoff_list, list) {
 		for (i = 0; i < ARRAY_SIZE(display_handoff_clks); i++)
