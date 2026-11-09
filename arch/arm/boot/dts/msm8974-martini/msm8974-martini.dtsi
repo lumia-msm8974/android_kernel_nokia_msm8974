@@ -425,8 +425,11 @@
  * LEDs: msm-pm8941.dtsi declares the qcom,leds-qpnp peripherals without
  * child nodes, so every probe fails with -ECHILD. The 930 panel is AMOLED
  * (brightness through DCS, no WLED).
- * TODO(martini): camera flash/torch and any notification LED from the
- * DSDT; all PM8941 LED blocks but KPDBL (below) are plainly off.
+ * No notification LED (no RGB1 device in the stock DSDT/SSDT). The camera
+ * flash is \_SB.CAMS.FLSH (QCOM0705, DSDT): an external driver on TLMM 83
+ * and 84, as on the 1520, not a PM8941 flash block; left off with the
+ * camera.
+ * All PM8941 LED blocks but KPDBL (below) are off.
  */
 &pm8941_lsid1 {
 	qcom,leds@d000 {
@@ -484,21 +487,25 @@
 		status = "disabled";
 	};
 	/*
-	 * Capacitive key backlight. The 930 has three LEDs under the keys
-	 * (touch settings: ButtonBacklights LedCount 3, LedIndexList 0-2, on
-	 * below 100 lux) and its panel driver (oempanel.sys) lights them
-	 * through the Qualcomm HWN LED driver (qchwnled, SPMI), as on the
-	 * 1520, where they are the PM8941 KPDBL rows on PWM channels 8-11
-	 * (bandit 23b5274d, seen working). Which rows the 930 uses, and their
-	 * current, are in the ACPI HWN LED device (\_SB.HWN0, QCOM0D50,
-	 * method HWNL, package CFG0), not in the driver packages.
-	 * TODO(martini): compare \_SB.HWN0.HWNL of the 930 DSDT with the 1520
-	 * one; if they match, set this node to "okay" (rows as on bandit,
-	 * already described) and config_deviceSupportsButtonBrightnessControl
-	 * to 2 in the device tree.
+	 * Capacitive key backlight: the PM8941 keypad backlight (KPDBL) rows,
+	 * as on the 1520 (bandit 23b5274d, seen working there). Evidence on
+	 * the 930:
+	 *  - stock DSDT \_SB.HWN0 (QCOM0D50, the Qualcomm HWN LED driver used
+	 *    by the panel driver's key light code) owns the same PM8941 SID 1
+	 *    peripherals as on the 1520, 0xd0, 0xe2 (KPDBL) and 0xe3 (_CRS),
+	 *    and its HWNL/CFG0 package matches the 1520 one except one byte
+	 *    (element 12: 0x02 here, 0x07 on the 1520), probably the mask of
+	 *    the rows in use;
+	 *  - stock registry (NOKIA_PANEL\Parameters\Settings): Back, Win and
+	 *    Search LEDs in groups 0x3 as on the 1520, LIGHT_LedGroup3_Pct
+	 *    0x32 (0x64 on the 1520); touch settings: three button LEDs, on
+	 *    below 100 lux.
+	 * All four rows are registered and driven together by the lights HAL,
+	 * as on bandit; rows with no LED just sink nothing.
+	 * TODO(martini): check on the phone which row lights the keys.
 	 */
 	qcom,leds@e200 {
-		status = "disabled";
+		status = "okay";
 
 		qcom,kpdbl1 {
 			label = "kpdbl";
