@@ -170,6 +170,15 @@
 			 * attribute turns them off for the navigation bar.
 			 */
 			synaptics,button-map = <158 172 139>;
+			/*
+			 * Double tap timing of the Windows touch settings
+			 * (bandit_SynapticsTouch.inf: DoubleTapMaxTapTime10ms
+			 * 0x23, DoubleTapMaxTapDistance100um 0x1e), written to
+			 * F12 ctrl18 at screen off. The 5 x 5 mm dead zone has
+			 * no known register.
+			 */
+			synaptics,dtap-max-time = <35>;
+			synaptics,dtap-max-dist = <30>;
 		};
 	};
 
