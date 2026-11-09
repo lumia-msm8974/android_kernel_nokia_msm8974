@@ -409,6 +409,33 @@
 	};
 };
 
+/*
+ * Board thermistors, from the ADC1 (QCOM240F) CHAN table of the stock DSDT
+ * (FFU RM-1045): SYS_THERM1 = AMUX 0xb3, SYS_THERM2 = 0xb4, PA_THERM = 0xb5,
+ * PA_THERM1 = 0xb7, SYS_THERM3 = 0xb8, all with the SYTB table, which
+ * matches the 100 kOhm pull-up scaling of these channels
+ * (qcom,scale-function = <2>). Windows runs 14 skin thermal zones on
+ * SYS_THERM2 (46-56 C: charging, CPU, GPU, display, camera, PEP), one on
+ * SYS_THERM1 (75 C) and one on PA_THERM (80 C, critical 85 C); PA_THERM1
+ * has no zone.
+ *
+ * The msm8974 thermal-engine blob reads ADC thermistors only through the
+ * thermal zones named "pa_therm0" and "pa_therm1" (its TSENS-type sensor
+ * table: zone type matched with strcmp, temperature in C times 1000).
+ * Give the SYS_THERM2 zone the "pa_therm1" name so that the Windows skin
+ * thresholds can be used, and rename the PA_THERM1 zone, which no Windows
+ * rule uses. The VADC channel labels (hwmon attributes) stay as they are.
+ */
+&pm8941_adc_tm {
+	chan@b4 {
+		label = "pa_therm1";	/* SYS_THERM2, skin */
+	};
+
+	chan@b7 {
+		label = "pa1_therm";	/* PA_THERM1 */
+	};
+};
+
 &pm8941_gpios {
 	gpio@c200 { /* GPIO 3: camera snapshot */
 		qcom,mode = <0>;
