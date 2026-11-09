@@ -322,6 +322,9 @@ struct mdss_dsi_ctrl_pdata {
 
 	struct dsi_panel_cmds on_cmds;
 	struct dsi_panel_cmds off_cmds;
+	/* video mode doze (nokia,mdss-dsi-doze-on/off-command) */
+	struct dsi_panel_cmds doze_on_cmds;
+	struct dsi_panel_cmds doze_off_cmds;
 	struct dsi_panel_cmds status_cmds;
 	u32 status_value;
 
@@ -424,6 +427,7 @@ int mdss_dsi_panel_power_ctrl(struct mdss_panel_data *pdata, int power_state);
 int mdss_dsi_panel_init(struct device_node *node,
 		struct mdss_dsi_ctrl_pdata *ctrl_pdata,
 		bool cmd_cfg_cont_splash);
+int mdss_dsi_panel_video_doze(struct mdss_panel_data *pdata, int enable);
 int mdss_panel_get_dst_fmt(u32 bpp, char mipi_mode, u32 pixel_packing,
 				char *dst_format);
 

@@ -17,6 +17,7 @@
 #include <linux/msm_ion.h>
 #include <linux/list.h>
 #include <linux/msm_mdp.h>
+#include <linux/pm_wakeup.h>
 #include <linux/types.h>
 #include <linux/notifier.h>
 
@@ -252,6 +253,10 @@ struct msm_fb_data_type {
 	u32 is_power_setting;
 
 	u32 dcm_state;
+	/* video mode panel dozing (screen state stays on), panel commands */
+	bool video_doze;
+	bool video_doze_panel;
+	struct wakeup_source video_doze_ws;
 	struct list_head proc_list;
 	u32 wait_for_kickoff;
 	struct ion_client *fb_ion_client;

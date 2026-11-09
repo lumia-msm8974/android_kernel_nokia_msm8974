@@ -70,6 +70,13 @@
 #define BLANK_FLAG_LP	FB_BLANK_NORMAL
 #define BLANK_FLAG_ULP	FB_BLANK_VSYNC_SUSPEND
 
+/*
+ * Doze commands of video mode panels (panel_info.video_doze). Writable at
+ * runtime: with 0 the panel stays in its normal mode during doze.
+ */
+static bool video_doze_enable = true;
+module_param_named(video_doze, video_doze_enable, bool, 0644);
+
 static struct fb_info *fbi_list[MAX_FBI_LIST];
 static int fbi_list_index;
 
@@ -635,6 +642,9 @@ static int mdss_fb_probe(struct platform_device *pdev)
 
 	mutex_init(&mfd->bl_lock);
 
+	if (mfd->panel_info->video_doze)
+		wakeup_source_init(&mfd->video_doze_ws, "mdss_fb_video_doze");
+
 	fbi_list[fbi_list_index++] = fbi;
 
 	platform_set_drvdata(pdev, mfd);
@@ -1189,6 +1199,57 @@ error:
 	return ret;
 }
 
+/*
+ * Doze on a video mode panel: the screen state stays MDSS_PANEL_POWER_ON
+ * (the MDP keeps streaming the frames Android draws) and only the panel
+ * switches to its low power mode. The system must not suspend meanwhile:
+ * suspend turns the MDSS footswitch off, and a video mode panel has no
+ * frame memory to keep the picture, so a wakeup source is held while
+ * dozing. With the video_doze parameter off the panel commands are skipped
+ * and doze is a normal screen on, still kept awake.
+ */
+static void mdss_fb_video_doze(struct msm_fb_data_type *mfd, bool enable)
+{
+	int ret;
+
+	if (mfd->video_doze == enable)
+		return;
+
+	if (enable && video_doze_enable) {
+		ret = mdss_fb_send_panel_event(mfd,
+				MDSS_EVENT_PANEL_VIDEO_DOZE, (void *)1);
+		if (ret)
+			pr_err("fb%d: panel doze entry failed (%d)\n",
+				mfd->index, ret);
+		else
+			mfd->video_doze_panel = true;
+	} else if (!enable && mfd->video_doze_panel) {
+		ret = mdss_fb_send_panel_event(mfd,
+				MDSS_EVENT_PANEL_VIDEO_DOZE, (void *)0);
+		if (ret)
+			pr_err("fb%d: panel doze exit failed (%d)\n",
+				mfd->index, ret);
+		mfd->video_doze_panel = false;
+	}
+
+	mfd->video_doze = enable;
+	if (enable)
+		__pm_stay_awake(&mfd->video_doze_ws);
+	else
+		__pm_relax(&mfd->video_doze_ws);
+	pr_info("fb%d: video doze %s%s\n", mfd->index, enable ? "on" : "off",
+		enable && !mfd->video_doze_panel ? " (panel in normal mode)" : "");
+}
+
+/* Screen off from doze: the panel off sequence ends the doze mode. */
+static void mdss_fb_video_doze_drop(struct msm_fb_data_type *mfd)
+{
+	mfd->video_doze = false;
+	mfd->video_doze_panel = false;
+	__pm_relax(&mfd->video_doze_ws);
+	pr_info("fb%d: video doze off (screen off)\n", mfd->index);
+}
+
 static int mdss_fb_blank_sub(int blank_mode, struct fb_info *info,
 			     int op_enable)
 {
@@ -1206,6 +1267,29 @@ static int mdss_fb_blank_sub(int blank_mode, struct fb_info *info,
 		blank_mode);
 
 	cur_power_state = mfd->panel_power_state;
+
+	/*
+	 * Video mode panel with doze commands: lp (doze) keeps the screen on
+	 * and puts the panel in its low power mode, unblank sends the doze
+	 * off commands first, a blank forgets the doze mode once the screen
+	 * is off (the off sequence and the reset of the next screen on end
+	 * it). Ulp (doze suspend) is not supported, since the frames must
+	 * keep flowing: it stays a full blank as below.
+	 */
+	if (mfd->panel_info->type != MIPI_CMD_PANEL &&
+			mfd->panel_info->video_doze) {
+		if (BLANK_FLAG_LP == blank_mode) {
+			if (!mdss_fb_is_power_on_interactive(mfd)) {
+				ret = mdss_fb_blank_unblank(mfd);
+				if (ret)
+					goto notify;
+			}
+			mdss_fb_video_doze(mfd, true);
+			goto notify;
+		}
+		if (FB_BLANK_UNBLANK == blank_mode)
+			mdss_fb_video_doze(mfd, false);
+	}
 
 	/*
 	 * Low power (lp) and ultra low pwoer (ulp) modes are currently only
@@ -1269,6 +1353,10 @@ static int mdss_fb_blank_sub(int blank_mode, struct fb_info *info,
 		break;
 	}
 
+	if (mfd->video_doze && mdss_fb_is_power_off(mfd))
+		mdss_fb_video_doze_drop(mfd);
+
+notify:
 	/* Notify listeners */
 	sysfs_notify(&mfd->fbi->dev->kobj, NULL, "show_blank_event");
 
