@@ -48,18 +48,19 @@
 	};
 
 	/*
-	 * Display: the UEFI leaves the panel refreshed by the MDP from
-	 * 0x00400000 (1080x1920, 32 bpp; address and size as on the 1520,
-	 * the 930 stock UEFI configuration gives 0x00400000-0x00c00000).
-	 * First bring-up uses this buffer only, without touching the display
-	 * hardware: MDSS is off below. RGB0 is switched to R,G,B,A by
+	 * Display: the UEFI leaves the video mode panel streamed by the MDP
+	 * from 0x00400000 (1080x1920, 32 bpp; address and size as on the
+	 * 1520, the 930 stock UEFI configuration gives 0x00400000-0x00c00000).
+	 * MDSS takes it over (continuous splash, see the DSI and panel nodes
+	 * below), so this simple-framebuffer view of the same buffer is off.
+	 * The fallback device tree msm8974-v2.2-martini-simplefb.dts turns it
+	 * back on with MDSS off: there RGB0 is switched to R,G,B,A by
 	 * bandit-splash.c only if it finds the exact state the 1520 UEFI
 	 * leaves; otherwise red and blue are swapped (cosmetic).
-	 * TODO(martini): check the boot log for "bandit-splash" and the
-	 * colours on the phone.
 	 */
-	framebuffer@400000 {
+	martini_simplefb: framebuffer@400000 {
 		compatible = "simple-framebuffer";
+		status = "disabled";
 		reg = <0x00400000 0x00800000>;
 		width = <1080>;
 		height = <1920>;
@@ -235,22 +236,32 @@
 	};
 
 	/*
-	 * MDSS off for the first boot: the screen is the UEFI buffer through
-	 * simple-framebuffer (the 1520 ran Android this way before MDSS). The
-	 * video-mode panel is described below; to hand the display to MDSS,
-	 * set these nodes to "ok" and disable framebuffer@400000.
-	 * TODO(martini): MDSS takeover of the running video-mode panel
-	 * (continuous splash) is untested with this kernel; the 17.1 kernel
-	 * needed fixes in mdss_mdp_intf_video.c for it.
+	 * Display: MDSS takes over the video mode panel the UEFI leaves
+	 * streaming (continuous splash), as on the 1520 with its command mode
+	 * panel:
+	 *  - the DSI PHY and PLL stay as the UEFI set them
+	 *    (nokia,keep-firmware-phy: never reprogrammed, clamped or reset,
+	 *    link clock rates never set; the PLL relocks at the rate the UEFI
+	 *    left after a screen off);
+	 *  - the interface timing and the DSI video mode setup are read back
+	 *    from the running hardware (nokia,keep-firmware-timing in the
+	 *    panel node), so the handoff rewrites the same values and later
+	 *    power ons program what the panel was initialised with;
+	 *  - the first unblank sends no panel command; the MDP switches the
+	 *    pipe left by the UEFI to border fill for one frame before it
+	 *    attaches its IOMMU, then shows Android;
+	 *  - screen off: display off + sleep in (DCS 28, 10), reset low;
+	 *    screen on: reset sequence, full panel init (DCS), as the 17.1
+	 *    Lumia 930 kernel; LVS1 and the DSI rails stay on (see below).
+	 * Reset on PM8941 GPIO 19 (base DSI node, configured below); no MTP
+	 * enable or TE lines (the stock panel has no TE in video mode).
+	 * Fallback without MDSS: msm8974-v2.2-martini-simplefb.dts.
 	 */
 	qcom,mdss_mdp@fd900000 {
-		status = "disabled";
 		qcom,mdss-pref-prim-intf = "dsi";
 	};
 	qcom,mdss_dsi@fd922800 {
-		status = "disabled";
 		qcom,dsi-pref-prim-pan = <&dsi_martini_amoled_video>;
-		/* reset on PM8941 GPIO 19 as in the base; no MTP enable/TE lines */
 		/delete-property/ qcom,platform-enable-gpio;
 		/delete-property/ qcom,platform-te-gpio;
 		qcom,platform-regulator-settings = [07 09 03 00 20 00 01];
@@ -455,9 +466,22 @@
 	};
 
 	/*
-	 * GPIO 19 (panel reset) is left as the UEFI set it: configuring it as
-	 * an output here would drive it low and reset the running panel.
+	 * GPIO 19: panel reset (DSI qcom,platform-reset-gpio), as the stock
+	 * PEP sets it for \_SB.DISP: digital output, CMOS, VIN2 (1.8 V),
+	 * strength high, high in D0 and low in D3. No qcom,invert here: the
+	 * level stays the one the UEFI left (high, panel running) until the
+	 * DSI driver drives it at the first screen off. The 17.1 Lumia 930
+	 * kernel sets the same, with strength low.
 	 */
+	gpio@d200 {
+		qcom,mode = <1>;		/* digital output */
+		qcom,output-type = <0>;		/* CMOS */
+		qcom,pull = <5>;		/* no pull */
+		qcom,vin-sel = <2>;		/* VIN2, 1.8 V */
+		qcom,out-strength = <3>;	/* high, as the stock PEP */
+		qcom,src-sel = <0>;		/* constant */
+		qcom,master-en = <1>;
+	};
 };
 
 /* Volume down (RESIN): key only, no PMIC reset on a long press */
@@ -712,29 +736,38 @@
 };
 
 /*
- * Panel: 5" 1080x1920 AMOLED, DSI video mode (burst), 4 lanes, 60 Hz,
+ * Panel "Aurora": 5" 1080x1920 AMOLED, DSI video mode, 4 lanes, 60 Hz,
  * brightness through DCS (0x51), reset on PM8941 GPIO 19 (base DSI node).
  * Timings, lanes, PHY and command sequences from the 17.1 Lumia 930 kernel
- * (dsi-panel-martini-amoled-dsi0-video.dtsi), converted to the bindings of
- * this kernel. The PHY is kept as programmed by the UEFI
- * (nokia,keep-firmware-phy), so the PHY timings are not written.
- * The Windows driver packages of the 930 do not carry the panel timings:
- * oempanel.inf/oempanel.sys (ACPI\NOKIA_PANEL) are the generic Nokia panel
- * driver (brightness, ESD check, colour settings; the same INF as other
- * 8974 Lumias), oled.inf only sets a taskbar option. On the 1520 the
- * timings and DSI sequences are in the panel XML returned by the ACPI
- * NOKIA_PANEL device. The Windows data used here:
+ * (dsi-panel-martini-amoled-dsi0-video.dtsi, the same values as the
+ * Android4Lumia dsi-panel-aurora-1080p-video.dtsi), converted to the
+ * bindings of this kernel. Stock data of the 930:
+ *  - the panel XML of the stock DSDT (\_SB.GPU0._ROM, "Aurora", the
+ *    panel configuration of the Windows display driver): 1080x1920,
+ *    24 bpp, 4 lanes, 60 Hz, LP in BLLP and BLLP EOF, EoT not appended,
+ *    PHY in DCDC mode; porches h 16/10/26, v 0/0/2 (front/back/pulse),
+ *    the same template numbers as the 1520 command mode XML, while the
+ *    17.1 kernel drives the panel with h 46/30/20, v 13/2/1. Which ones
+ *    the UEFI uses is not known without the phone: the timing below is
+ *    only a fallback, nokia,keep-firmware-timing takes the one of the
+ *    running interface at boot and logs both;
+ *  - the init sequence of that XML (commented out, like the 1520 one:
+ *    Windows uses the panel as the UEFI leaves it) is the 17.1 one byte
+ *    for byte (11, F0 5A 5A, CB, F7 03, F0 A5 A5, 53 2C, 51, 29), with
+ *    21 ms after sleep out (120 ms here, as the 17.1 kernel) and 51 80
+ *    instead of 51 ff; reset "DSI_PANEL_RESET, 0, 10" (active low);
  *  - physical size 62.00 x 115.00 mm, from the touch settings
- *    (DisplayWidth10um 0x1838, DisplayHeight10um 0x2cec, 1080x1920);
- *    the 17.1 kernel had 65 mm for the width;
+ *    (DisplayWidth10um 0x1838, DisplayHeight10um 0x2cec; the XML EDID
+ *    gives 62 x 110 mm); the 17.1 kernel had 65 mm for the width;
  *  - DCS brightness 0..255: oempanel.sys logs "Brightness: %u/255" and
- *    the on sequence ends with 51 ff; the 17.1 kernel capped the level
- *    at 128, half of the range, without a stated reason;
+ *    its on sequence ends with 51 ff; the 17.1 kernel capped the level
+ *    at 128, the XML init value;
  *  - Samsung panel (oempanel.sys string), consistent with the Samsung
  *    level 2 key F0 5A 5A of the init sequence.
- * TODO(martini): check timings, porches and sequences against the panel
- * XML of the 930 ACPI tables (NOKIA_PANEL) before switching to MDSS.
- * Only used once MDSS is enabled above.
+ * The PHY is kept as programmed by the UEFI (nokia,keep-firmware-phy):
+ * the PHY timings below are not written. With nokia,keep-firmware-timing
+ * the DSI video mode setup (traffic mode, LP states, lanes, t-clk, EoT,
+ * RGB order) is also taken from the controller the UEFI left running.
  */
 &mdss_mdp {
 	dsi_martini_amoled_video: qcom,mdss_dsi_martini_amoled_video {
@@ -743,6 +776,8 @@
 		qcom,mdss-dsi-panel-type = "dsi_video_mode";
 		qcom,mdss-dsi-panel-destination = "display_1";
 		qcom,cont-splash-enabled;
+		/* timing and DSI video setup from the running UEFI */
+		nokia,keep-firmware-timing;
 		qcom,mdss-dsi-panel-framerate = <60>;
 		qcom,mdss-dsi-virtual-channel-id = <0>;
 		qcom,mdss-dsi-stream = <0>;
@@ -781,9 +816,12 @@
 		qcom,mdss-dsi-dma-trigger = "trigger_sw";
 		qcom,mdss-dsi-reset-sequence = <1 20>, <0 200>, <1 20>;
 		/*
-		 * Samsung-style level 2 key (F0 5A 5A), panel setup, key
-		 * lock (F0 A5 A5), dimming on (53 2C), full brightness, display
-		 * on. Not sent at the first unblank (continuous splash).
+		 * Screen on after a reset: sleep out, Samsung-style level 2
+		 * key (F0 5A 5A), panel setup, key lock (F0 A5 A5), brightness
+		 * control on (53 2C), full brightness (the driver then restores
+		 * the Android level), display on. Screen off: display off,
+		 * brightness control off, sleep in. Neither is sent at the first
+		 * unblank (continuous splash).
 		 */
 		qcom,mdss-dsi-on-command = [05 01 00 00 78 00 02 11 00
 				39 01 00 00 00 00 03 f0 5a 5a
@@ -806,18 +844,20 @@
 };
 
 /*
- * Panel and DSI rails, MDSS GDSC never cut: with MDSS off nothing else
- * votes for them, and the UEFI panel must stay lit. Stock PEP: the MDP
+ * Panel and DSI rails, MDSS GDSC never cut. Stock PEP: the MDP
  * (\_SB.GPU0) uses L2 (1.2 V) and L12 (1.8 V); the panel (\_SB.DISP) uses
  * LVS1 (1.8 V), then 25 ms, then PM8941 GPIO 19 (reset) as a high output
  * (VIN2), and the reverse at power off (reset low, 10 ms, LVS1 off).
  * There is no AMOLED ELVDD/ELVSS rail on the SoC side: the panel module
  * makes them. L22 (3.0 V) is the touch rail (\_SB.TSC1), kept on for the
  * wakeup gesture.
+ * With MDSS, the DSI node votes for vdda (L2), vdd (L22) and vddio (L12),
+ * as the 17.1 Lumia 930 kernel; all of them, LVS1 and the GDSC stay on
+ * when the screen is off: the PHY and PLL kept from the UEFI live in the
+ * GDSC, and LVS1 is not switched by the 17.1 kernel either. Screen off is
+ * sleep in plus reset low; the PEP's LVS1 cut is not done.
  * \_SB.DISP also lists TLMM 12 (MDP_VSYNC, the panel TE) and TLMM 32, 33
  * and 34 (roles unknown, not touched).
- * TODO(martini): before the MDSS switch, give the panel LVS1 as its
- * supply (the base DSI node uses L22, an MTP choice).
  */
 &pm8941_l2 {
 	regulator-always-on;

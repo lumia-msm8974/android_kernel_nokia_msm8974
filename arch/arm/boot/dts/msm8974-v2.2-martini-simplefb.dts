@@ -1,0 +1,27 @@
+/*
+ * Nokia Lumia 930 (martini): MSM8974 v2.2 (8974AB), PM8941 + PM8841,
+ * display fallback: UEFI framebuffer through simple-framebuffer, MDSS off.
+ *
+ * Copyright (c) 2026, Lorenzo Giannoccaro.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 and
+ * only version 2 as published by the Free Software Foundation.
+ *
+ * Not built into zImage-dtb by the defconfig: build it with
+ * "make msm8974-v2.2-martini-simplefb.dtb" and append it to zImage in
+ * place of msm8974-v2.2-martini.dtb (see KERNEL-MARTINI.md).
+ */
+
+/dts-v1/;
+
+/include/ "msm8974-v2.2.dtsi"
+/include/ "msm8974-martini/msm8974-martini.dtsi"
+/include/ "msm8974-martini/msm8974-martini-simplefb.dtsi"
+
+/ {
+	model = "Nokia Lumia 930 (simple-framebuffer)";
+	compatible = "nokia,martini", "qcom,msm8974";
+	/* as msm8974-v2.2-martini.dts */
+	qcom,msm-id = <126 0x96 0x20002>;
+};

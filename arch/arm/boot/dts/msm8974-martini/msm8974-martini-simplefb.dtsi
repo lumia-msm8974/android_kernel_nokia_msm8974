@@ -1,0 +1,41 @@
+/*
+ * Nokia Lumia 930 (martini): display fallback without MDSS.
+ *
+ * Copyright (c) 2026, Lorenzo Giannoccaro.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 and
+ * only version 2 as published by the Free Software Foundation.
+ *
+ * The screen stays the UEFI framebuffer, shown through simple-framebuffer:
+ * MDSS and DSI are off, nothing touches the display hardware, PM8941
+ * GPIO 19 (panel reset) is left as the UEFI set it, and the display clocks
+ * keep their firmware votes (clock.c keeps them while a simple-framebuffer
+ * node is enabled). No brightness control and no screen off. For a first
+ * boot test of the phone, or when the MDSS takeover fails; Android needs
+ * the software graphics build (TARGET_MARTINI_GRAPHICS=software) to draw.
+ */
+
+&martini_simplefb {
+	status = "okay";
+};
+
+&mdss_mdp {
+	status = "disabled";
+};
+
+&mdss_dsi0 {
+	status = "disabled";
+};
+
+&pm8941_gpios {
+	gpio@d200 {	/* GPIO 19: panel reset, untouched */
+		/delete-property/ qcom,mode;
+		/delete-property/ qcom,output-type;
+		/delete-property/ qcom,pull;
+		/delete-property/ qcom,vin-sel;
+		/delete-property/ qcom,out-strength;
+		/delete-property/ qcom,src-sel;
+		/delete-property/ qcom,master-en;
+	};
+};
