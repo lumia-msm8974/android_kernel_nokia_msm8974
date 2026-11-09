@@ -26,6 +26,7 @@
 #include <linux/mutex.h>
 #include <linux/of.h>
 #include <linux/seq_file.h>
+#include <linux/ratelimit.h>
 #include <trace/events/power.h>
 #include <mach/tz-restricted.h>
 #include <mach/clk-provider.h>
@@ -1051,6 +1052,12 @@ int msm_clock_handoff_set(unsigned int release)
 	list_for_each_entry_reverse(h, &handoff_list, list) {
 		if (h->released || !(release & handoff_clk_group(h->clk)))
 			continue;
+		/* a driver that disabled more than it enabled took the vote */
+		if (!h->clk->count || !h->clk->prepare_count) {
+			pr_warn_ratelimited("handoff: %s has no enable left\n",
+					    h->clk->dbg_name);
+			continue;
+		}
 		clk_disable_unprepare(h->clk);
 		h->released = true;
 		pr_debug("handoff: %s released\n", h->clk->dbg_name);
