@@ -104,8 +104,20 @@ enum device_status {
 /* F12 ctrl20 byte 2: reporting mode */
 #define F12_CONTINUOUS_MODE 0x00
 #define F12_WAKEUP_GESTURE_MODE 0x02
-/* F12 data4 byte 0: gesture type, double tap on the Lumia 1520 firmware */
+/*
+ * F12 data4 byte 0: gesture type. A double tap is 0x02 on the Lumia 1520
+ * firmware and 0x03 on the Lumia 950 XL one.
+ */
 #define F12_GESTURE_DOUBLE_TAP 0x02
+#define F12_GESTURE_DOUBLE_TAP_ALT 0x03
+/*
+ * F12 ctrl18: double tap zone (bytes 0-7), maximum time between the taps
+ * in 10 ms units (byte 8), maximum distance in 0.1 mm units (byte 9), as
+ * measured on the Lumia 950 XL firmware.
+ */
+#define F12_CTRL18_DTAP_SIZE 10
+#define F12_CTRL18_MAX_TAP_TIME 8
+#define F12_CTRL18_MAX_TAP_DIST 9
 #define WAKE_GESTURE_RESUME_TIMEOUT_MS 700
 #define WAKE_GESTURE_WAKELOCK_MS 1000
 
@@ -691,7 +703,11 @@ static ssize_t synaptics_rmi4_wake_gesture_show(struct device *dev,
 			rmi4_data->wake_gesture_enabled);
 }
 
-/* Takes effect the next time the screen turns off. */
+/*
+ * Enabling takes effect the next time the screen turns off. Disabling
+ * while the gesture is armed (screen off) leaves the gesture mode and
+ * completes the normal, powered down suspend.
+ */
 static ssize_t synaptics_rmi4_wake_gesture_store(struct device *dev,
 		struct device_attribute *attr, const char *buf, size_t count)
 {
@@ -704,7 +720,14 @@ static ssize_t synaptics_rmi4_wake_gesture_store(struct device *dev,
 	if (!rmi4_data->wake_gesture_supported)
 		return -ENODEV;
 
+	mutex_lock(&rmi4_data->wake_gesture_mutex);
 	rmi4_data->wake_gesture_enabled = input > 0;
+	if (!rmi4_data->wake_gesture_enabled &&
+			rmi4_data->wake_gesture_active) {
+		synaptics_rmi4_resume(&rmi4_data->input_dev->dev);
+		synaptics_rmi4_suspend(&rmi4_data->input_dev->dev);
+	}
+	mutex_unlock(&rmi4_data->wake_gesture_mutex);
 
 	return count;
 }
@@ -1431,8 +1454,62 @@ static int synaptics_rmi4_f12_wake_mode(struct synaptics_rmi4_data *rmi4_data,
 
 	ctrl20[2] = wake ? F12_WAKEUP_GESTURE_MODE : F12_CONTINUOUS_MODE;
 
-	return synaptics_rmi4_i2c_write(rmi4_data, rmi4_data->f12_ctrl20_addr,
+	retval = synaptics_rmi4_i2c_write(rmi4_data, rmi4_data->f12_ctrl20_addr,
 			ctrl20, sizeof(ctrl20));
+	if (retval < 0)
+		return retval;
+
+	/* Read back: returns -EIO if the controller kept the old mode. */
+	retval = synaptics_rmi4_i2c_read(rmi4_data, rmi4_data->f12_ctrl20_addr,
+			ctrl20, sizeof(ctrl20));
+	if (retval < 0)
+		return retval;
+
+	return ctrl20[2] == (wake ? F12_WAKEUP_GESTURE_MODE :
+			F12_CONTINUOUS_MODE) ? 0 : -EIO;
+}
+
+/*
+ * Program the double tap timing of the board (F12 ctrl18 bytes 8 and 9),
+ * which the firmware resets on every power cycle. Nothing is written when
+ * the board gives no timing or the register is missing.
+ */
+static void synaptics_rmi4_f12_dtap_params(
+		struct synaptics_rmi4_data *rmi4_data)
+{
+	int retval;
+	unsigned char ctrl18[F12_CTRL18_DTAP_SIZE];
+	const struct synaptics_rmi4_platform_data *pdata = rmi4_data->board;
+	struct device *dev = &rmi4_data->i2c_client->dev;
+
+	if (!rmi4_data->f12_ctrl18_present ||
+			!pdata->dtap_max_time || !pdata->dtap_max_dist)
+		return;
+
+	retval = synaptics_rmi4_i2c_read(rmi4_data, rmi4_data->f12_ctrl18_addr,
+			ctrl18, sizeof(ctrl18));
+	if (retval < 0)
+		return;
+
+	if (ctrl18[F12_CTRL18_MAX_TAP_TIME] == pdata->dtap_max_time &&
+			ctrl18[F12_CTRL18_MAX_TAP_DIST] == pdata->dtap_max_dist)
+		return;
+
+	ctrl18[F12_CTRL18_MAX_TAP_TIME] = pdata->dtap_max_time;
+	ctrl18[F12_CTRL18_MAX_TAP_DIST] = pdata->dtap_max_dist;
+	retval = synaptics_rmi4_i2c_write(rmi4_data, rmi4_data->f12_ctrl18_addr,
+			ctrl18, sizeof(ctrl18));
+	if (retval < 0) {
+		dev_err(dev, "%s: failed to write F12 ctrl18\n", __func__);
+		return;
+	}
+
+	retval = synaptics_rmi4_i2c_read(rmi4_data, rmi4_data->f12_ctrl18_addr,
+			ctrl18, sizeof(ctrl18));
+	if (retval >= 0)
+		dev_info(dev, "%s: double tap max time %u x10 ms, max distance %u x0.1 mm\n",
+				__func__, ctrl18[F12_CTRL18_MAX_TAP_TIME],
+				ctrl18[F12_CTRL18_MAX_TAP_DIST]);
 }
 
 /*
@@ -1476,7 +1553,8 @@ static void synaptics_rmi4_wake_gesture_report(
 	synaptics_rmi4_f12_wake_mode(rmi4_data, true);
 
 	dev_dbg(dev, "%s: gesture 0x%02x\n", __func__, gesture);
-	if (gesture != F12_GESTURE_DOUBLE_TAP)
+	if (gesture != F12_GESTURE_DOUBLE_TAP &&
+			gesture != F12_GESTURE_DOUBLE_TAP_ALT)
 		return;
 
 	input_report_key(rmi4_data->input_dev, KEY_WAKEUP, 1);
@@ -1588,6 +1666,19 @@ static int synaptics_rmi4_parse_dt(struct device *dev,
 	if (rc && (rc != -EINVAL)) {
 		dev_err(dev, "Unable to read fw image name\n");
 		return rc;
+	}
+
+	/* Wake gesture double tap timing (0: firmware default) */
+	if (of_property_read_u32(np, "synaptics,dtap-max-time",
+			&rmi4_pdata->dtap_max_time))
+		rmi4_pdata->dtap_max_time = 0;
+	if (of_property_read_u32(np, "synaptics,dtap-max-dist",
+			&rmi4_pdata->dtap_max_dist))
+		rmi4_pdata->dtap_max_dist = 0;
+	if (rmi4_pdata->dtap_max_time > 0xff || rmi4_pdata->dtap_max_dist > 0xff) {
+		dev_warn(dev, "double tap timing out of range, ignored\n");
+		rmi4_pdata->dtap_max_time = 0;
+		rmi4_pdata->dtap_max_dist = 0;
 	}
 
 	/* reset, irq gpio info */
@@ -1993,6 +2084,19 @@ static int synaptics_rmi4_f12_init(struct synaptics_rmi4_data *rmi4_data,
 				query_5.ctrl17_is_present +
 				query_5.ctrl18_is_present +
 				query_5.ctrl19_is_present;
+		rmi4_data->f12_ctrl18_present = query_5.ctrl18_is_present;
+		rmi4_data->f12_ctrl18_addr = fhandler->full_addr.ctrl_base +
+				ctrl_8_offset +
+				query_5.ctrl8_is_present +
+				query_5.ctrl9_is_present +
+				query_5.ctrl10_is_present +
+				query_5.ctrl11_is_present +
+				query_5.ctrl12_is_present +
+				query_5.ctrl13_is_present +
+				query_5.ctrl14_is_present +
+				query_5.ctrl15_is_present +
+				query_5.ctrl16_is_present +
+				query_5.ctrl17_is_present;
 		rmi4_data->f12_data4_addr = fhandler->full_addr.data_base +
 				query_8.data0_is_present +
 				query_8.data1_is_present +
@@ -3093,6 +3197,7 @@ static int __devinit synaptics_rmi4_probe(struct i2c_client *client,
 	init_waitqueue_head(&rmi4_data->wait);
 	init_completion(&rmi4_data->sys_resumed);
 	complete_all(&rmi4_data->sys_resumed);
+	mutex_init(&rmi4_data->wake_gesture_mutex);
 	mutex_init(&(rmi4_data->rmi4_io_ctrl_mutex));
 
 	INIT_LIST_HEAD(&rmi->support_fn_list);
@@ -3482,12 +3587,14 @@ static int fb_notifier_callback(struct notifier_block *self,
 		 * not interactive there, so treat them like screen off (and
 		 * arm the wake gesture if it is enabled).
 		 */
+		mutex_lock(&rmi4_data->wake_gesture_mutex);
 		if (*blank == FB_BLANK_UNBLANK)
 			synaptics_rmi4_resume(&(rmi4_data->input_dev->dev));
 		else if (*blank == FB_BLANK_POWERDOWN ||
 				*blank == FB_BLANK_NORMAL ||
 				*blank == FB_BLANK_VSYNC_SUSPEND)
 			synaptics_rmi4_suspend(&(rmi4_data->input_dev->dev));
+		mutex_unlock(&rmi4_data->wake_gesture_mutex);
 	}
 
 	return 0;
@@ -3744,6 +3851,8 @@ static int synaptics_rmi4_wake_gesture_enter(
 	if (retval < 0)
 		goto restore;
 
+	synaptics_rmi4_f12_dtap_params(rmi4_data);
+
 	retval = synaptics_rmi4_f12_wake_mode(rmi4_data, true);
 	if (retval < 0)
 		goto restore;
@@ -3763,11 +3872,24 @@ restore:
 static void synaptics_rmi4_wake_gesture_exit(
 		struct synaptics_rmi4_data *rmi4_data)
 {
+	int retval;
+
 	disable_irq_wake(rmi4_data->irq);
 	synaptics_rmi4_irq_enable(rmi4_data, false);
 	rmi4_data->wake_gesture_active = false;
 
-	synaptics_rmi4_f12_wake_mode(rmi4_data, false);
+	/*
+	 * A controller left in gesture mode would report no fingers: if it
+	 * does not accept continuous reporting, reset and query it again
+	 * (the reset restores the firmware's continuous mode).
+	 */
+	retval = synaptics_rmi4_f12_wake_mode(rmi4_data, false);
+	if (retval < 0) {
+		dev_err(&rmi4_data->i2c_client->dev,
+				"%s: continuous mode not accepted (%d), resetting\n",
+				__func__, retval);
+		synaptics_rmi4_reset_device(rmi4_data);
+	}
 	synaptics_rmi4_i2c_write(rmi4_data, rmi4_data->f01_ctrl_base_addr + 1,
 			rmi4_data->saved_intr_enable,
 			rmi4_data->num_of_intr_regs);
