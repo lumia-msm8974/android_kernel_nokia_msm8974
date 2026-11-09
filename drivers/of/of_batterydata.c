@@ -17,6 +17,7 @@
 #include <linux/module.h>
 #include <linux/types.h>
 #include <linux/batterydata-lib.h>
+#include <linux/mutex.h>
 
 static int of_batterydata_read_lut(const struct device_node *np,
 			int max_cols, int max_rows, int *ncols, int *nrows,
@@ -263,6 +264,74 @@ static int64_t of_batterydata_convert_battery_id_kohm(int batt_id_uv,
 	return resistor_value_kohm;
 }
 
+/*
+ * Optional high voltage check of a battery profile.
+ *
+ * A profile may describe a cell that is rated for a higher voltage than
+ * the board charges an unknown pack to (the Nokia BV-5QW: 4.35 V, while
+ * the Lumia 930 board defaults stay at 4.10 V, the limit the stock
+ * Windows driver uses until it has authenticated the pack). Such a
+ * profile lists, in nokia,hv-batt-id-range-kohm = <min max>, the battery
+ * ID resistor range that identifies the pack. Only when the measured ID
+ * is inside that range is the profile's qcom,max-voltage-uv reported;
+ * otherwise (ID out of range, open or shorted, or the check disabled with
+ * of_batterydata.hv_allowed=0 on the kernel command line) max_voltage_uv
+ * is -EINVAL and the fuel gauge and the charger keep their own defaults.
+ *
+ * The first reader decides for the whole boot, so that the fuel gauge and
+ * the charger, which read the ID channel separately, always agree.
+ * hv_state reads -1 before the first decision, then BATT_HV_REJECTED or
+ * BATT_HV_ACCEPTED.
+ */
+static bool hv_allowed = true;
+module_param(hv_allowed, bool, 0444);
+MODULE_PARM_DESC(hv_allowed, "allow the high voltage of identified packs");
+
+static int hv_state = -1;
+module_param(hv_state, int, 0444);
+MODULE_PARM_DESC(hv_state, "high voltage check: 1 rejected, 2 accepted");
+
+static int hv_batt_id_kohm = -1;
+module_param(hv_batt_id_kohm, int, 0444);
+MODULE_PARM_DESC(hv_batt_id_kohm, "battery ID used by the high voltage check");
+
+static DEFINE_MUTEX(hv_lock);
+
+static void of_batterydata_check_hv(struct device_node *node,
+				int batt_id_kohm,
+				struct bms_battery_data *batt_data)
+{
+	u32 range[2];
+
+	if (of_property_read_u32_array(node, "nokia,hv-batt-id-range-kohm",
+					range, 2)) {
+		batt_data->hv_state = BATT_HV_NO_CHECK;
+		return;
+	}
+
+	mutex_lock(&hv_lock);
+	if (hv_state < 0) {
+		hv_batt_id_kohm = batt_id_kohm;
+		if (!hv_allowed)
+			hv_state = BATT_HV_REJECTED;
+		else if (range[0] > 0 && batt_id_kohm >= range[0]
+				&& batt_id_kohm <= range[1])
+			hv_state = BATT_HV_ACCEPTED;
+		else
+			hv_state = BATT_HV_REJECTED;
+
+		pr_info("%s: battery ID %d kohm, high voltage range %u-%u kohm%s: %s\n",
+			node->name, batt_id_kohm, range[0], range[1],
+			hv_allowed ? "" : " (disabled)",
+			hv_state == BATT_HV_ACCEPTED ? "accepted" : "rejected");
+	}
+	batt_data->hv_state = hv_state;
+	mutex_unlock(&hv_lock);
+
+	if (batt_data->hv_state != BATT_HV_ACCEPTED)
+		batt_data->max_voltage_uv = -EINVAL;
+}
+
 int of_batterydata_read_data(struct device_node *batterydata_container_node,
 				struct bms_battery_data *batt_data,
 				int batt_id_uv)
@@ -308,8 +377,14 @@ int of_batterydata_read_data(struct device_node *batterydata_container_node,
 		return -ENODATA;
 	}
 
-	return of_batterydata_load_battery_data(best_node,
+	rc = of_batterydata_load_battery_data(best_node,
 					best_id_kohm, batt_data);
+	if (rc)
+		return rc;
+
+	of_batterydata_check_hv(best_node, batt_id_kohm, batt_data);
+
+	return 0;
 }
 
 MODULE_LICENSE("GPL v2");
