@@ -28,4 +28,6 @@ struct mba_data {
 extern struct pil_reset_ops pil_msa_pbl_ops;
 extern struct pil_reset_ops pil_msa_mba_ops;
 
+bool pil_msa_image_rejected(void);
+
 #endif
