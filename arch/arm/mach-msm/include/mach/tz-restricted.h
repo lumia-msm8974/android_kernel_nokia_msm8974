@@ -11,7 +11,7 @@
 
 #include <linux/types.h>
 
-#ifdef CONFIG_MACH_NOKIA_BANDIT
+#ifdef CONFIG_MACH_NOKIA_LUMIA8974
 /* True on firmware whose TrustZone lacks the Android SCM services */
 bool msm_tz_restricted(void);
 /* Same check usable from ->reserve(), before the DT is unflattened */

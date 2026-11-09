@@ -35,7 +35,7 @@
 #include "qdsp6v2/msm-pcm-routing-v2.h"
 #include "../codecs/wcd9xxx-common.h"
 #include "../codecs/wcd9320.h"
-#ifdef CONFIG_MACH_NOKIA_BANDIT
+#ifdef CONFIG_MACH_NOKIA_LUMIA8974
 #include "../codecs/tas2552-i2s.h"
 #endif
 
@@ -117,9 +117,9 @@ static const struct soc_enum msm8974_auxpcm_enum[] = {
 
 /*
  * Secondary MI2S back ends: the Oppo N3 and the Nokia Lumia 1520 (bandit)
- * both drive an external speaker amplifier from SEC_MI2S.
+ * and 930 (martini) drive an external speaker amplifier from SEC_MI2S.
  */
-#if defined(CONFIG_MACH_N3) || defined(CONFIG_MACH_NOKIA_BANDIT)
+#if defined(CONFIG_MACH_N3) || defined(CONFIG_MACH_NOKIA_LUMIA8974)
 #define MSM8974_SEC_MI2S_BE
 #endif
 
@@ -1590,7 +1590,7 @@ static int msm_be_hw_params_fixup_sec_mi2s(struct snd_soc_pcm_runtime *rtd,
 	return 0;
 }
 
-#ifdef CONFIG_MACH_NOKIA_BANDIT
+#ifdef CONFIG_MACH_NOKIA_LUMIA8974
 /*
  * Lumia 1520 loudspeaker: the TAS2552 takes a stereo I2S frame (two 32-bit
  * slots, 64 bit clocks at 48 kHz) and averages the channels, whatever the
@@ -2197,7 +2197,7 @@ static int msm8974_mi2s_startup(struct snd_pcm_substream *substream)
 			dev_err(cpu_dai->dev, "set format for CPU dai"
 				" failed\n");
 
-#ifndef CONFIG_MACH_NOKIA_BANDIT
+#ifndef CONFIG_MACH_NOKIA_LUMIA8974
 		ret = snd_soc_dai_set_fmt(codec_dai, SND_SOC_DAIFMT_CBS_CFS);
 		if (ret < 0)
 			dev_err(codec_dai->dev, "set format for codec dai"
@@ -2207,7 +2207,7 @@ static int msm8974_mi2s_startup(struct snd_pcm_substream *substream)
 		ret  = 0;
 	}
 
-#ifdef CONFIG_MACH_NOKIA_BANDIT
+#ifdef CONFIG_MACH_NOKIA_LUMIA8974
 	/*
 	 * Loudspeaker amplifier: I2S slave on the MSM clocks, PLL fed by the
 	 * 3.072 MHz bit clock (no MCLK pin on this board). Done for every
@@ -3222,7 +3222,7 @@ static struct snd_soc_dai_link msm8974_common_dai_links[] = {
 		.stream_name = "Secondary MI2S Playback",
 		.cpu_dai_name = "msm-dai-q6-mi2s.1",
 		.platform_name = "msm-pcm-routing",
-#ifdef CONFIG_MACH_NOKIA_BANDIT
+#ifdef CONFIG_MACH_NOKIA_LUMIA8974
 		/* TAS2552 on BLSP1 QUP5 (i2c-6), address 0x40 */
 		.codec_name     = "tas2552.6-0040",
 		.codec_dai_name = "tas2552-amplifier",
@@ -3268,7 +3268,7 @@ static struct snd_soc_dai_link msm8974_hdmi_dai_link[] = {
 	},
 };
 
-#ifdef CONFIG_MACH_NOKIA_BANDIT
+#ifdef CONFIG_MACH_NOKIA_LUMIA8974
 /*
  * Without an enabled TAS2552 node the card would wait forever for its
  * codec: fall back to the stub so the rest of the card still comes up.
@@ -3547,7 +3547,7 @@ static __devinit int msm8974_asoc_machine_probe(struct platform_device *pdev)
 		card->dai_link	= msm8974_common_dai_links;
 		card->num_links	= ARRAY_SIZE(msm8974_common_dai_links);
 	}
-#ifdef CONFIG_MACH_NOKIA_BANDIT
+#ifdef CONFIG_MACH_NOKIA_LUMIA8974
 	msm8974_bandit_check_spk_amp(&pdev->dev, card);
 #endif
 	mutex_init(&cdc_mclk_mutex);

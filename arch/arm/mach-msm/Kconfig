@@ -1151,8 +1151,8 @@ endmenu
 source "arch/arm/mach-msm/oppo/Kconfig"
 
 config BANDIT_BOOT_MARKS
-	bool "Nokia Lumia 1520: coloured boot progress bands on the UEFI framebuffer"
-	depends on MACH_NOKIA_BANDIT
+	bool "Nokia Lumia MSM8974: coloured boot progress bands on the UEFI framebuffer"
+	depends on MACH_NOKIA_LUMIA8974
 	help
 	  Bring-up aid. Each early boot stage (zImage decompressor, kernel
 	  entry, paging, memory, scheduler, initcalls) paints a coloured band
@@ -1160,15 +1160,34 @@ config BANDIT_BOOT_MARKS
 	  0x00400000, and a panic paints a red band at the bottom. Shows how
 	  far the kernel got with no USB and no console. Say N for normal use.
 
+config MACH_NOKIA_LUMIA8974
+	bool
+	select FB_SIMPLE
+	help
+	  Common support for the Nokia Lumia MSM8974 phones booted through
+	  the Windows Phone firmware (UEFI -> bootmgr -> BootShim -> lk1st):
+	  restricted TrustZone (see tz-restricted.c), kernel at 0x10008000,
+	  secondary CPUs through the UEFI parking mailboxes, UEFI framebuffer
+	  at 0x00400000. Selected by the boards below.
+
 config MACH_NOKIA_BANDIT
 	bool "Nokia Lumia 1520 (bandit)"
 	depends on ARCH_MSM8974
-	select FB_SIMPLE
+	select MACH_NOKIA_LUMIA8974
 	help
 	  Support for the Nokia Lumia 1520, booted through the Windows Phone
 	  firmware (UEFI -> bootmgr -> BootShim -> lk1st). Its TrustZone does
 	  not implement the SCM boot-address and power-collapse services, so
 	  the kernel avoids them (see tz-restricted.c).
+
+config MACH_NOKIA_MARTINI
+	bool "Nokia Lumia 930 (martini)"
+	depends on ARCH_MSM8974
+	select MACH_NOKIA_LUMIA8974
+	help
+	  Support for the Nokia Lumia 930, booted through the Windows Phone
+	  firmware like the Lumia 1520, with the same restricted TrustZone
+	  and UEFI parking protocol for the secondary CPUs.
 
 config MSM_STACKED_MEMORY
 	bool "Stacked Memory"
@@ -1184,7 +1203,7 @@ config PHYS_OFFSET
 	default "0x80200000" if ARCH_APQ8064
 	default "0x80200000" if ARCH_MSM8960
 	default "0x80200000" if ARCH_MSM8930
-	default "0x10000000" if MACH_NOKIA_BANDIT
+	default "0x10000000" if MACH_NOKIA_LUMIA8974
 	default "0x00000000" if ARCH_MSM8974
 	default "0x00000000" if ARCH_APQ8084
 	default "0x00000000" if ARCH_MPQ8092

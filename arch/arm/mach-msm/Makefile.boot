@@ -46,8 +46,8 @@ endif
    zreladdr-$(CONFIG_ARCH_APQ8064)	:= 0x80208000
 
 # MSM8974
-ifeq ($(CONFIG_MACH_NOKIA_BANDIT),y)
-   # Lumia 1520: keep the low 256 MB (UEFI framebuffer, CPU parking
+ifeq ($(CONFIG_MACH_NOKIA_LUMIA8974),y)
+   # Lumia 1520/930: keep the low 256 MB (UEFI framebuffer, CPU parking
    # mailboxes, firmware carve-outs) untouched, as lk1st loads it here
    zreladdr-$(CONFIG_ARCH_MSM8974)	:= 0x10008000
 else

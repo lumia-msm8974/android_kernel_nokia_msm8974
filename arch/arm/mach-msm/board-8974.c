@@ -52,10 +52,12 @@
 #include "platsmp.h"
 
 /*
- * Nokia Lumia 1520: lk1st passes a flat memory map, the firmware carve-outs
- * are removed by the "nokia,bandit-mem-hole" node (qcom,memblock-remove).
+ * Nokia Lumia 1520/930: lk1st passes a flat memory map, the firmware
+ * carve-outs are removed by the "nokia,bandit-mem-hole" and
+ * "nokia,martini-mem-hole" nodes (qcom,memblock-remove).
  */
 EXPORT_COMPAT("nokia,bandit-mem-hole");
+EXPORT_COMPAT("nokia,martini-mem-hole");
 
 #ifdef CONFIG_ANDROID_PERSISTENT_RAM
 /*

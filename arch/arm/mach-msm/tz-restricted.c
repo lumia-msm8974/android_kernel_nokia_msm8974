@@ -1,5 +1,6 @@
 /*
- * Phones booted by the Windows Phone firmware (Nokia Lumia 1520 "bandit").
+ * Phones booted by the Windows Phone firmware (Nokia Lumia 1520 "bandit",
+ * Nokia Lumia 930 "martini").
  *
  * Copyright (c) 2026, Lorenzo Giannoccaro.
  *
@@ -18,8 +19,8 @@
  * Findings on real hardware by the mainline bring-up of the Lumia 1520
  * (KorelisLabs, lumia-1520-mainline, docs/trustzone-quirks.md).
  *
- * Detection: DT root compatible "nokia,bandit", or "msm_tz_restricted=<0|1>"
- * on the command line to force it either way.
+ * Detection: DT root compatible "nokia,bandit" or "nokia,martini", or
+ * "msm_tz_restricted=<0|1>" on the command line to force it either way.
  */
 
 #include <linux/init.h>
@@ -33,6 +34,12 @@
 
 static int tz_restricted_param = -1;
 
+/* Boards booted by the Windows Phone firmware */
+static const char * const tz_restricted_boards[] = {
+	"nokia,bandit",
+	"nokia,martini",
+};
+
 static int __init msm_tz_restricted_setup(char *str)
 {
 	get_option(&str, &tz_restricted_param);
@@ -42,16 +49,27 @@ early_param("msm_tz_restricted", msm_tz_restricted_setup);
 
 bool msm_tz_restricted(void)
 {
+	int i;
+
 	if (tz_restricted_param >= 0)
 		return tz_restricted_param;
-	return of_machine_is_compatible("nokia,bandit");
+	for (i = 0; i < ARRAY_SIZE(tz_restricted_boards); i++)
+		if (of_machine_is_compatible(tz_restricted_boards[i]))
+			return true;
+	return false;
 }
 
 bool __init msm_tz_restricted_early(void)
 {
+	int i;
+
 	if (tz_restricted_param >= 0)
 		return tz_restricted_param;
-	return of_flat_dt_is_compatible(of_get_flat_dt_root(), "nokia,bandit");
+	for (i = 0; i < ARRAY_SIZE(tz_restricted_boards); i++)
+		if (of_flat_dt_is_compatible(of_get_flat_dt_root(),
+					     tz_restricted_boards[i]))
+			return true;
+	return false;
 }
 
 /*
