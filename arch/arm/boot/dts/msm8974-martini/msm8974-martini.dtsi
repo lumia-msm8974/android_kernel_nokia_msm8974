@@ -710,11 +710,26 @@
 };
 
 /*
- * Modem off for the first boot, as in the 17.1 Lumia 930 kernel. The PIL
- * here can load the SSD-encrypted Nokia images (pil-ssd.c, working on the
- * 1520), but a failed start can reset the phone.
- * TODO(martini): enable qcom,mss@fc880000 once the phone boots and the
- * modem images on the 930 are checked (SSD header, MBA).
+ * Modem on, started as on the 1520 (MSA self-auth, images at their ELF
+ * addresses, SSD decryption through the TZ in pil-ssd.c). Checked offline
+ * against the 930 stock firmware, unverified on a phone:
+ *  - qcdsp1v28974.mbn (MBA): one segment at 0x0d100000, 0x3a254 bytes,
+ *    starting with the SSD metadata (0x6e4 bytes), as on the 1520;
+ *  - qcdsp28974.mbn (modem): 29 program headers, hash segment at
+ *    0x0d100000, 20 loadable segments with data in 0x08000000-0x0d100000,
+ *    SSD metadata at the same offset of the hash segment as on the 1520;
+ *    the images are encrypted to the 930's own SSD key (a different key id
+ *    from the 1520's, the same as the 930 ADSP, WCNSS and Venus images);
+ *  - stock UEFI (uefiplatWPBlue.cfg of the RM-1045 FFU): "Subsystem
+ *    Reserved 0" 0x08000000-0x0d900000 holds both, inside the memory
+ *    removed by martini,mem-hole;
+ *  - stock TZ TZ.BF.2.0.1-2.0.1034, code identical to the 1520's (only the
+ *    signature differs), so the same SSD and PIL SCM interface;
+ *  - registry: qcsubsys MaxRestartCount 3, no fixed load addresses.
+ * pil_q6v5_mss limits the starts to max_attempts (3) per boot, stops after
+ * a rejected image, leaves a modem that crashed past the limit off, and
+ * pil_q6v5_mss.boot_enabled=0 on the command line (or the Android
+ * property persist.vendor.martini.modem=0) keeps it off.
  *
  * WCNSS (Pronto + WCN3680, Wi-Fi/Bluetooth) on, with the 5-wire link
  * muxed by the board file: Wi-Fi works in the 17.1 Lumia 930 kernel
@@ -722,7 +737,7 @@
  */
 &soc {
 	qcom,mss@fc880000 {
-		status = "disabled";
+		status = "ok";
 	};
 	qcom,pronto@fb21b000 {
 		status = "ok";
