@@ -272,6 +272,9 @@ struct qpnp_chg_regulator {
  * @safe_current:		battery safety current setting
  * @maxinput_usb_ma:		Maximum Input current USB
  * @maxinput_dc_ma:		Maximum Input current DC
+ * @dc_vinmin_mv:		input voltage limit while charging from DC, 0 to
+ *				use min_voltage_mv for both inputs
+ * @dc_is_wireless:		the DC input is fed by a wireless receiver
  * @hot_batt_p			Hot battery threshold setting
  * @cold_batt_p			Cold battery threshold setting
  * @warm_bat_decidegc		Warm battery temperature in degree Celsius
@@ -354,6 +357,8 @@ struct qpnp_chg_chip {
 	bool				resuming_charging;
 	unsigned int			maxinput_usb_ma;
 	unsigned int			maxinput_dc_ma;
+	unsigned int			dc_vinmin_mv;
+	bool				dc_is_wireless;
 	unsigned int			hot_batt_p;
 	unsigned int			cold_batt_p;
 	int				warm_bat_decidegc;
@@ -1078,6 +1083,30 @@ qpnp_chg_vinmin_set(struct qpnp_chg_chip *chip, int voltage)
 			QPNP_CHG_VINMIN_MASK, temp, 1);
 }
 
+/*
+ * The PM8941 has one VIN_MIN for whichever input is charging. A wireless
+ * receiver on the DC input needs a higher limit than a USB charger (the
+ * Lumia 930 Windows driver uses 6.6 V and 4.3 V), so switch it with the
+ * active input when the board gives a DC value.
+ */
+static void
+qpnp_chg_select_vinmin(struct qpnp_chg_chip *chip)
+{
+	int vinmin_mv = chip->min_voltage_mv;
+	bool usb, dc;
+
+	if (!chip->dc_vinmin_mv || !chip->dc_chgpth_base)
+		return;
+
+	usb = qpnp_chg_is_usb_chg_plugged_in(chip);
+	dc = qpnp_chg_is_dc_chg_plugged_in(chip);
+	if (dc && (!usb || qpnp_is_dc_higher_prio(chip)))
+		vinmin_mv = chip->dc_vinmin_mv;
+
+	pr_debug("usb %d dc %d: vinmin %d mV\n", usb, dc, vinmin_mv);
+	qpnp_chg_vinmin_set(chip, vinmin_mv);
+}
+
 static int
 qpnp_chg_vinmin_get(struct qpnp_chg_chip *chip)
 {
@@ -1788,6 +1817,7 @@ qpnp_chg_usb_usbin_valid_irq_handler(int irq, void *_chip)
 			schedule_work(&chip->soc_check_work);
 		}
 
+		qpnp_chg_select_vinmin(chip);
 		power_supply_set_present(chip->usb_psy, chip->usb_present);
 		schedule_work(&chip->batfet_lcl_work);
 	}
@@ -1982,6 +2012,8 @@ qpnp_chg_dc_dcin_valid_irq_handler(int irq, void *_chip)
 						USB_9V_UV);
 			}
 		}
+
+		qpnp_chg_select_vinmin(chip);
 
 		pr_debug("psy changed dc_psy\n");
 		power_supply_changed(&chip->dc_psy);
@@ -4664,6 +4696,51 @@ qpnp_chg_request_irqs(struct qpnp_chg_chip *chip)
 	return rc;
 }
 
+/*
+ * Limits for a pack whose battery profile passed the high voltage check
+ * (of_batterydata, BATT_HV_ACCEPTED). They come from the nokia,hv-*
+ * properties of the charger node; without them the board defaults stay.
+ * The charge voltage never exceeds the profile's cell maximum, and the
+ * safety limits are only raised, never lowered below the board values
+ * (VDD_SAFE and IBAT_SAFE may be write-once).
+ */
+static void
+qpnp_chg_apply_hv_limits(struct qpnp_chg_chip *chip, int cell_max_mv)
+{
+	struct device_node *np = chip->spmi->dev.of_node;
+	u32 vddmax_mv, ibatmax_ma, val;
+
+	if (of_property_read_u32(np, "nokia,hv-vddmax-mv", &vddmax_mv)
+		|| of_property_read_u32(np, "nokia,hv-ibatmax-ma",
+					&ibatmax_ma)) {
+		pr_info("no high voltage limits for this board: %d mV\n",
+			chip->max_voltage_mv);
+		return;
+	}
+
+	chip->max_voltage_mv = min_t(int, vddmax_mv, cell_max_mv);
+	chip->max_bat_chg_current = ibatmax_ma;
+	chip->safe_voltage_mv = max(chip->safe_voltage_mv,
+					chip->max_voltage_mv);
+	chip->safe_current = max(chip->safe_current, ibatmax_ma);
+
+	if (!of_property_read_u32(np, "nokia,hv-cool-bat-mv", &val))
+		chip->cool_bat_mv = min_t(int, val, chip->max_voltage_mv);
+	if (!of_property_read_u32(np, "nokia,hv-ibatmax-cool-ma", &val))
+		chip->cool_bat_chg_ma = min(val, ibatmax_ma);
+	if (!of_property_read_u32(np, "nokia,hv-warm-bat-mv", &val))
+		chip->warm_bat_mv = min_t(int, val, chip->max_voltage_mv);
+	if (!of_property_read_u32(np, "nokia,hv-ibatmax-warm-ma", &val))
+		chip->warm_bat_chg_ma = min(val, ibatmax_ma);
+	if (!of_property_read_u32(np, "nokia,hv-tchg-mins", &val))
+		chip->tchg_mins = val;
+
+	pr_info("high voltage battery: %d mV, %d mA (cool %d mV %d mA, warm %d mV %d mA)\n",
+		chip->max_voltage_mv, chip->max_bat_chg_current,
+		chip->cool_bat_mv, chip->cool_bat_chg_ma,
+		chip->warm_bat_mv, chip->warm_bat_chg_ma);
+}
+
 static int
 qpnp_chg_load_battery_data(struct qpnp_chg_chip *chip)
 {
@@ -4692,10 +4769,25 @@ qpnp_chg_load_battery_data(struct qpnp_chg_chip *chip)
 			return rc;
 		}
 
-		if (batt_data.max_voltage_uv >= 0) {
-			chip->max_voltage_mv = batt_data.max_voltage_uv / 1000;
-			chip->safe_voltage_mv = chip->max_voltage_mv
-				+ MAX_DELTA_VDD_MAX_MV;
+		switch (batt_data.hv_state) {
+		case BATT_HV_ACCEPTED:
+			qpnp_chg_apply_hv_limits(chip,
+					batt_data.max_voltage_uv / 1000);
+			break;
+		case BATT_HV_REJECTED:
+			/* unidentified pack: keep the board limits */
+			pr_info("battery not identified as high voltage: %d mV, %d mA\n",
+				chip->max_voltage_mv,
+				chip->max_bat_chg_current);
+			break;
+		default:
+			if (batt_data.max_voltage_uv >= 0) {
+				chip->max_voltage_mv =
+					batt_data.max_voltage_uv / 1000;
+				chip->safe_voltage_mv = chip->max_voltage_mv
+					+ MAX_DELTA_VDD_MAX_MV;
+			}
+			break;
 		}
 		if (batt_data.iterm_ua >= 0)
 			chip->term_current = batt_data.iterm_ua / 1000;
@@ -5138,6 +5230,12 @@ qpnp_charger_read_dt_props(struct qpnp_chg_chip *chip)
 			return rc;
 	}
 
+	/* Optional separate input voltage limit for the DC input */
+	of_property_read_u32(chip->spmi->dev.of_node, "nokia,dc-vinmin-mv",
+				&chip->dc_vinmin_mv);
+	chip->dc_is_wireless = of_property_read_bool(chip->spmi->dev.of_node,
+					"nokia,dc-wireless");
+
 	/* Get the use-external-rsense property */
 	chip->use_external_rsense = of_property_read_bool(
 			chip->spmi->dev.of_node,
@@ -5545,7 +5643,9 @@ qpnp_charger_probe(struct spmi_device *spmi)
 
 	if (chip->dc_chgpth_base) {
 		chip->dc_psy.name = "qpnp-dc";
-		chip->dc_psy.type = POWER_SUPPLY_TYPE_MAINS;
+		chip->dc_psy.type = chip->dc_is_wireless ?
+				POWER_SUPPLY_TYPE_WIRELESS :
+				POWER_SUPPLY_TYPE_MAINS;
 		chip->dc_psy.supplied_to = pm_power_supplied_to;
 		chip->dc_psy.num_supplicants = ARRAY_SIZE(pm_power_supplied_to);
 		chip->dc_psy.properties = pm_power_props_mains;
@@ -5625,6 +5725,7 @@ qpnp_charger_probe(struct spmi_device *spmi)
 	qpnp_chg_usb_chg_gone_irq_handler(chip->chg_gone.irq, chip);
 	qpnp_chg_usb_usbin_valid_irq_handler(chip->usbin_valid.irq, chip);
 	qpnp_chg_dc_dcin_valid_irq_handler(chip->dcin_valid.irq, chip);
+	qpnp_chg_select_vinmin(chip);
 	power_supply_set_present(chip->usb_psy,
 			qpnp_chg_is_usb_chg_plugged_in(chip));
 
