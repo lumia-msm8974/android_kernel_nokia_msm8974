@@ -11,8 +11,18 @@
  * (dated 2013-05-27), as converted for the LineageOS 17.1 Lumia 930 kernel
  * (bms-batterydata-bv-5qw.c): FCC is the rated minimum capacity, the OCV
  * table is a 10 mA discharge and the temperature axes are the original
- * ones. Rewritten here in the device tree format of this kernel.
+ * ones. Rewritten here in the device tree format of this kernel. The
+ * same file (BATTERY.PROVISION in EFIESP of the RM-1045 FFU
+ * 02540.00019.15236.45005) matches these tables value for value and also
+ * gives VBAT_MAX 4350 mV, IBAT_MAX 1800 mA and the battery ID: "1.8V
+ * reference, 100k pull-up, 330k +- 10%".
  * Not verified on a phone with this kernel.
+ *
+ * High voltage check (of_batterydata): the 4.35 V maximum is only used
+ * when the battery ID reads 297-363 kOhm (330 kOhm +- 10 %). Otherwise
+ * the fuel gauge and the charger keep the board defaults (4.10 V). The
+ * stock Windows driver goes further and authenticates the pack over MIPI
+ * BIF before it charges above 4.10 V; that is not possible here.
  */
 
 qcom,nokia-bv5qw-data {
@@ -20,11 +30,14 @@ qcom,nokia-bv5qw-data {
 	qcom,default-rbatt-mohm = <132>;
 	qcom,rbatt-capacitive-mohm = <0>;
 	qcom,flat-ocv-threshold-uv = <3800000>;
-	/* characterization ceiling; the charger stops lower (see the board) */
+	/* cell maximum, only with the ID check passed (see above) */
 	qcom,max-voltage-uv = <4350000>;
 	qcom,v-cutoff-uv = <3400000>;
-	qcom,chg-term-ua = <100000>;
-	qcom,batt-id-kohm = <0>;	/* only profile: picked whatever the ID */
+	/* Windows battery.json iterm */
+	qcom,chg-term-ua = <150000>;
+	/* only profile: picked whatever the ID, the check is below */
+	qcom,batt-id-kohm = <330>;
+	nokia,hv-batt-id-range-kohm = <297 363>;
 
 	qcom,fcc-temp-lut {
 		qcom,lut-col-legend = <(-20) (-10) 0 23 45 70>;
