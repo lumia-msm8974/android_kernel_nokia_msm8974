@@ -864,12 +864,6 @@ void msm_pm_cpu_enter_lowpower(unsigned int cpu)
 	if (MSM_PM_DEBUG_HOTPLUG & msm_pm_debug_mask)
 		pr_notice("CPU%u: %s: shutting down cpu\n", cpu, __func__);
 
-	/* Lumia 1520: power collapse goes through TrustZone, WFI only */
-	if (msm_tz_restricted()) {
-		msm_pm_swfi(false);
-		return;
-	}
-
 	if (allow[MSM_PM_SLEEP_MODE_POWER_COLLAPSE])
 		msm_pm_power_collapse(false);
 	else if (allow[MSM_PM_SLEEP_MODE_POWER_COLLAPSE_STANDALONE])

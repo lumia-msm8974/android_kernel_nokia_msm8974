@@ -16,22 +16,9 @@
 bool msm_tz_restricted(void);
 /* Same check usable from ->reserve(), before the DT is unflattened */
 bool msm_tz_restricted_early(void);
-/*
- * May a secondary CPU go offline? It cannot be powered down on this
- * firmware, so an offline CPU waits in WFI inside the kernel.
- * @tasks_frozen: the request comes from system suspend.
- */
-bool msm_tz_restricted_cpu_down_ok(bool tasks_frozen);
-/* False when platform_cpu_disable() must refuse (cpu_down=0) */
-bool msm_tz_restricted_cpu_disable_ok(void);
 #else
 static inline bool msm_tz_restricted(void) { return false; }
 static inline bool msm_tz_restricted_early(void) { return false; }
-static inline bool msm_tz_restricted_cpu_down_ok(bool tasks_frozen)
-{
-	return true;
-}
-static inline bool msm_tz_restricted_cpu_disable_ok(void) { return true; }
 #endif
 
 #endif

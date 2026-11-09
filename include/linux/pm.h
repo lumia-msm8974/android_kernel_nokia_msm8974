@@ -516,7 +516,6 @@ struct dev_pm_info {
 	struct completion	completion;
 	struct wakeup_source	*wakeup;
 	bool			wakeup_path:1;
-	bool			skip_sleep;	/* see dpm_skip_device() */
 #else
 	unsigned int		should_wakeup:1;
 #endif
@@ -620,7 +619,6 @@ struct dev_pm_domain {
 
 #ifdef CONFIG_PM_SLEEP
 extern void device_pm_lock(void);
-extern bool dpm_skip_device(struct device *dev);
 extern void dpm_resume_start(pm_message_t state);
 extern void dpm_resume_end(pm_message_t state);
 extern void dpm_resume(pm_message_t state);
