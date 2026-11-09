@@ -116,11 +116,15 @@
 #define APDS_CYCLE_STEPS	(APDS_ALS_CYCLES + (256 - APDS_PTIME_VAL) + \
 				 (256 - APDS_WTIME_VAL))
 
-/* Datasheet lux coefficients, scaled x1000 */
+/*
+ * Datasheet lux coefficients, scaled x1000. B, C and D can be replaced by
+ * the board (avago,lux-coeff-b/c/d), for a different window over the
+ * sensor.
+ */
 #define APDS_DF			52
-#define APDS_B			1862
-#define APDS_C			746
-#define APDS_D			1291
+static unsigned int apds_b = 1862;
+static unsigned int apds_c = 746;
+static unsigned int apds_d = 1291;
 
 #define APDS_LUX_MAX		200000
 #define APDS_PROX_NEAR_CM	0
@@ -138,7 +142,9 @@ static const unsigned int apds_again_tbl[] = { 1, 8, 16, 120 };
 /*
  * Glass attenuation x1000. The Lumia 1520 dark glass passes very little
  * light: calibrated on an RM-937 against a reference phone at 22 lux
- * (CH0 163, CH1 34 at 120x gain, 101 ms), giving GA about 51.4.
+ * (CH0 163, CH1 34 at 120x gain, 101 ms), giving GA about 51.4. Other
+ * boards set it with avago,glass-attenuation; the parameter still
+ * overrides it at run time.
  */
 static unsigned int als_ga = 51400;
 module_param(als_ga, uint, 0644);
@@ -153,7 +159,10 @@ static bool als_autogain = true;
 module_param(als_autogain, bool, 0644);
 MODULE_PARM_DESC(als_autogain, "Switch ALS gain automatically on saturation/low light");
 
-/* Raw PDATA thresholds (hysteresis): ~270 uncovered, 1023 covered */
+/*
+ * Raw PDATA thresholds (hysteresis): ~270 uncovered, 1023 covered on the
+ * 1520. Boards can set them with avago,prox-near and avago,prox-far.
+ */
 static unsigned int prox_near = 600;
 module_param(prox_near, uint, 0644);
 MODULE_PARM_DESC(prox_near, "PDATA above which the object is near");
@@ -290,8 +299,8 @@ static int apds_read_data(struct apds9930 *chip, u8 *status, u16 *ch0,
 static unsigned int apds_calc_lux(unsigned int ch0, unsigned int ch1,
 				  unsigned int gain)
 {
-	s64 iac1 = (s64)ch0 * 1000 - (s64)APDS_B * ch1;
-	s64 iac2 = (s64)APDS_C * ch0 - (s64)APDS_D * ch1;
+	s64 iac1 = (s64)ch0 * 1000 - (s64)apds_b * ch1;
+	s64 iac2 = (s64)apds_c * ch0 - (s64)apds_d * ch1;
 	s64 iac = max3(iac1, iac2, (s64)0);	/* x1000 */
 	u64 num, den, lux;
 
@@ -649,6 +658,40 @@ static void apds_put_supply(struct regulator *reg)
 	regulator_put(reg);
 }
 
+/*
+ * Board calibration from the device tree. There is one sensor per phone,
+ * so the values replace the module-wide defaults, which stay writable
+ * through the parameters.
+ */
+static void __devinit apds_parse_dt(struct device *dev)
+{
+	struct device_node *np = dev->of_node;
+	u32 val;
+
+	if (!np)
+		return;
+	if (!of_property_read_u32(np, "avago,glass-attenuation", &val) && val)
+		als_ga = val;
+	if (!of_property_read_u32(np, "avago,lux-coeff-b", &val))
+		apds_b = val;
+	if (!of_property_read_u32(np, "avago,lux-coeff-c", &val))
+		apds_c = val;
+	if (!of_property_read_u32(np, "avago,lux-coeff-d", &val))
+		apds_d = val;
+	if (!of_property_read_u32(np, "avago,prox-near", &val))
+		prox_near = val;
+	if (!of_property_read_u32(np, "avago,prox-far", &val))
+		prox_far = val;
+	if (prox_far >= prox_near) {
+		dev_warn(dev, "prox-far %u not below prox-near %u, using 400/600\n",
+			 prox_far, prox_near);
+		prox_near = 600;
+		prox_far = 400;
+	}
+	dev_info(dev, "GA %u, B %u, C %u, D %u, prox %u/%u\n", als_ga,
+		 apds_b, apds_c, apds_d, prox_near, prox_far);
+}
+
 static int __devinit apds_probe(struct i2c_client *client,
 				const struct i2c_device_id *id)
 {
@@ -667,6 +710,7 @@ static int __devinit apds_probe(struct i2c_client *client,
 	chip->client = client;
 	mutex_init(&chip->lock);
 	i2c_set_clientdata(client, chip);
+	apds_parse_dt(&client->dev);
 
 	chip->vdd = apds_get_supply(&client->dev, "vdd");
 	if (IS_ERR(chip->vdd))
