@@ -42,6 +42,8 @@ struct module;
  * @powerup: Start a subsystem
  * @crash_shutdown: Shutdown a subsystem when the system crashes (can't sleep)
  * @ramdump: Collect a ramdump of the subsystem
+ * @may_restart: Optional: return false to refuse a restart after a crash;
+ * the subsystem is then left to its driver instead of being restarted
  * @is_not_loadable: Indicate if subsystem firmware is not loadable via pil
  * framework
  */
@@ -58,6 +60,7 @@ struct subsys_desc {
 	int (*powerup)(const struct subsys_desc *desc);
 	void (*crash_shutdown)(const struct subsys_desc *desc);
 	int (*ramdump)(int, const struct subsys_desc *desc);
+	bool (*may_restart)(const struct subsys_desc *desc);
 	irqreturn_t (*err_fatal_handler) (int irq, void *dev_id);
 	irqreturn_t (*stop_ack_handler) (int irq, void *dev_id);
 	irqreturn_t (*wdog_bite_handler) (int irq, void *dev_id);

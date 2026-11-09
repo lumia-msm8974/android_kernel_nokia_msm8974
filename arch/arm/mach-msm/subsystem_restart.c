@@ -767,6 +767,13 @@ int subsystem_restart_dev(struct subsys_device *dev)
 		return -EBUSY;
 	}
 
+	if (dev->desc->may_restart && !dev->desc->may_restart(dev->desc)) {
+		pr_err("Restart sequence for %s refused by its driver.\n", name);
+		module_put(dev->owner);
+		put_device(&dev->dev);
+		return -EPERM;
+	}
+
 	pr_info("Restart sequence requested for %s, restart_level = %s.\n",
 		name, restart_levels[dev->restart_level]);
 
