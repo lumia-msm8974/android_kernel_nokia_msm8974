@@ -1733,9 +1733,14 @@ void __init msm_8974_init_gpiomux(void)
 					ARRAY_SIZE(msm_lcd_te_configs));
 			msm_gpiomux_install(bandit_sensor_i2c_configs,
 					ARRAY_SIZE(bandit_sensor_i2c_configs));
-			msm_gpiomux_install(bandit_nfc_configs,
-					ARRAY_SIZE(bandit_nfc_configs));
 		}
+		/*
+		 * NXP PN544 NFC controller: the same \_SB.NFC1 resources on
+		 * both boards (BLSP1 QUP6 at 0x2b, VEN TLMM 57, interrupt
+		 * TLMM 59, firmware download TLMM 85).
+		 */
+		msm_gpiomux_install(bandit_nfc_configs,
+				ARRAY_SIZE(bandit_nfc_configs));
 		pr_info("%s: keeping firmware pin configuration\n", __func__);
 		return;
 	}

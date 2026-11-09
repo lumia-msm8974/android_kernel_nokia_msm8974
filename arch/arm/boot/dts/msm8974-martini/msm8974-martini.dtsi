@@ -144,9 +144,23 @@
 	};
 
 	/*
-	 * TODO(martini): NFC chip, bus, address and lines from the DSDT
-	 * (\_SB.NFC*). The 1520 has an NXP PN544 on BLSP1 QUP6; not assumed.
+	 * NFC: stock SSDT \_SB.NFC1 (NXP_NFCC) is the same as on the 1520:
+	 * I2C6 (BLSP1 QUP6, f9928000) at 0x2b, 400 kHz; interrupt TLMM 59
+	 * (edge, active high, pull-down); outputs TLMM 57 (VEN) and TLMM 85
+	 * (firmware download). Stock PEP: S3 (1.8 V) and the BBCLK2 clock
+	 * buffer (ref_clk of 3-002b in clock-8974.c). The Windows NFC package
+	 * carries the PN544 C3 firmware (NxpPN544c3Fw.dll), so the chip is a
+	 * PN544 driven by the same character device as on bandit.
 	 */
+	i2c@f9928000 { /* BLSP1 QUP6 */
+		nfc@2b {
+			compatible = "nokia,bandit-pn544";
+			reg = <0x2b>;
+			nxp,irq-gpio = <&msmgpio 59 0>;
+			nxp,ven-gpio = <&msmgpio 57 0>;
+			nxp,firm-gpio = <&msmgpio 85 0>;
+		};
+	};
 
 	/*
 	 * Keys (stock DSDT): camera snapshot PM8941 GPIO 3, camera focus GPIO 4,
