@@ -32,6 +32,7 @@
 #include <linux/platform_device.h>
 #include <linux/of.h>
 #include <trace/events/power.h>
+#include <mach/tz-restricted.h>
 
 static DEFINE_MUTEX(l2bw_lock);
 
@@ -240,6 +241,13 @@ static int msm_cpufreq_cpu_callback(struct notifier_block *nfb,
 	/* Fail hotplug until this driver can get CPU clocks */
 	if (!hotplug_ready)
 		return NOTIFY_BAD;
+
+	/*
+	 * Lumia 1520: an offline CPU still runs (WFI in the kernel), so its
+	 * clock and the L2 clock must stay on, as the firmware left them.
+	 */
+	if (msm_tz_restricted())
+		return NOTIFY_OK;
 
 	switch (action & ~CPU_TASKS_FROZEN) {
 

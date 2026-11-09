@@ -125,6 +125,37 @@ static int __init tz_restricted_nosuspend_init(void)
 late_initcall(tz_restricted_nosuspend_init);
 
 /*
+ * CPU hotplug. A secondary core released from the UEFI parking mailbox
+ * cannot be parked or powered down again, but it can wait in WFI inside the
+ * kernel (platform_do_lowpower()) until boot_secondary() releases it from the
+ * pen. System suspend needs this: it takes every non-boot CPU down.
+ *   0: refuse in platform_cpu_disable() (old behaviour)
+ *   1: refuse in CPU_DOWN_PREPARE, before any notifier runs
+ *   2: WFI hotplug during system suspend only, refuse at runtime (default)
+ *   3: WFI hotplug always (tests)
+ */
+static int cpu_down = 2;
+module_param(cpu_down, int, 0644);
+
+bool msm_tz_restricted_cpu_down_ok(bool tasks_frozen)
+{
+	switch (cpu_down) {
+	case 0:		/* checked in platform_cpu_disable() */
+	case 3:
+		return true;
+	case 2:
+		return tasks_frozen;
+	default:
+		return false;
+	}
+}
+
+bool msm_tz_restricted_cpu_disable_ok(void)
+{
+	return cpu_down != 0;
+}
+
+/*
  * Suspend watchdog: if a suspend/resume cycle has not finished after
  * suspend_wd_secs (time spent asleep does not count, jiffies stop), dump
  * the suspending task, the blocked tasks that are not frozen and every CPU,

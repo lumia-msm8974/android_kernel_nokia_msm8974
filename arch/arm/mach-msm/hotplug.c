@@ -67,6 +67,15 @@ int platform_cpu_kill(unsigned int cpu)
 {
 	int ret = 0;
 
+	/*
+	 * Lumia 1520: the CPU waits in WFI and never reports a power
+	 * collapse; msm_pm_wait_cpu_shutdown() would spin forever.
+	 */
+	if (msm_tz_restricted()) {
+		cpumask_clear_cpu(cpu, &cpu_dying_mask);
+		return 1;
+	}
+
 	if (cpumask_test_and_clear_cpu(cpu, &cpu_dying_mask))
 		ret = msm_pm_wait_cpu_shutdown(cpu);
 
@@ -110,9 +119,11 @@ int platform_cpu_disable(unsigned int cpu)
 		return -EPERM;
 	/*
 	 * Lumia 1520: a core released from the UEFI parking mailbox cannot be
-	 * parked again (no SCM boot address, no power collapse): no hotplug.
+	 * parked again (no SCM boot address, no power collapse). It goes
+	 * offline by waiting in WFI in platform_do_lowpower() instead; when
+	 * that is not allowed the request is refused in CPU_DOWN_PREPARE.
 	 */
-	if (msm_tz_restricted())
+	if (msm_tz_restricted() && !msm_tz_restricted_cpu_disable_ok())
 		return -EPERM;
 	return 0;
 }
@@ -168,6 +179,14 @@ static int hotplug_cpu_check_callback(struct notifier_block *nfb,
 			pr_err_ratelimited("CPU0 hotplug is not supported\n");
 			return NOTIFY_BAD;
 		}
+		/*
+		 * Refuse before any other notifier has run: failing later,
+		 * in platform_cpu_disable(), unwinds the whole notifier
+		 * chain with CPU_DOWN_FAILED.
+		 */
+		if (msm_tz_restricted() &&
+		    !msm_tz_restricted_cpu_down_ok(action & CPU_TASKS_FROZEN))
+			return NOTIFY_BAD;
 		break;
 	default:
 		break;

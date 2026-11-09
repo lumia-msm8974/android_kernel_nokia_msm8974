@@ -30,6 +30,7 @@
 #include <linux/debugfs.h>
 #include <linux/syscore_ops.h>
 #include <linux/cpu.h>
+#include <mach/tz-restricted.h>
 #include <mach/msm_iomap.h>
 #include "krait-regulator-pmic.h"
 
@@ -1056,6 +1057,13 @@ static int krait_regulator_cpu_callback(struct notifier_block *nfb,
 
 	pr_debug("start state=0x%02x, cpu=%d is_online=%d\n",
 			(int)action, cpu, cpu_online(cpu));
+	/*
+	 * Lumia 1520: an offline CPU waits in WFI and keeps its power; leave
+	 * its regulator mode alone.
+	 */
+	if (msm_tz_restricted())
+		return NOTIFY_OK;
+
 	switch (action & ~CPU_TASKS_FROZEN) {
 	case CPU_UP_PREPARE:
 	case CPU_UP_CANCELED:
