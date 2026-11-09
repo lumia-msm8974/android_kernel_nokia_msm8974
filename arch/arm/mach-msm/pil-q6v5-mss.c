@@ -26,6 +26,7 @@
 #include <linux/interrupt.h>
 #include <linux/dma-mapping.h>
 #include <linux/of_gpio.h>
+#include <linux/workqueue.h>
 
 #include <mach/subsystem_restart.h>
 #include <mach/clk.h>
@@ -54,6 +55,7 @@ struct modem_data {
 	bool crash_shutdown;
 	bool ignore_errors;
 	struct completion stop_ack;
+	struct work_struct lumia_off_work;
 };
 
 #define subsys_to_drv(d) container_of(d, struct modem_data, subsys_desc)
@@ -78,6 +80,97 @@ static void log_modem_sfr(void)
 
 	smem_reason[0] = '\0';
 	wmb();
+}
+
+/*
+ * Lumia 1520 and 930 (Windows Phone TrustZone): the modem starts at most
+ * max_attempts times per boot, counting restarts after a crash, as the
+ * stock firmware allows (qcsubsys MaxRestartCount 3). A failed PBL does not
+ * answer again until the MSS is power cycled, and every QMI/SMD client
+ * retries subsystem_get("modem") every 1-2 s, so further attempts are
+ * refused without touching the hardware. After the PBL, the MBA or the
+ * TrustZone rejected an image (pil_msa_image_rejected()) no attempt is
+ * made at all.
+ *
+ * boot_enabled=0 keeps the modem off: pil_q6v5_mss.boot_enabled=0 on the
+ * kernel command line, or /sys/module/pil_q6v5_mss/parameters/boot_enabled
+ * at run time (the Android init writes it from a property).
+ *
+ * A modem that crashes when no further start is allowed is shut down and
+ * left off (may_restart). Going through subsystem restart would end in a
+ * panic ("Powerup error: modem") once the gate refuses the power-up, and
+ * with CONFIG_PANIC_TIMEOUT the phone would then reboot and start the
+ * modem again, in a loop.
+ */
+static bool boot_enabled = true;
+module_param(boot_enabled, bool, 0644);
+static unsigned int max_attempts = 3;
+module_param(max_attempts, uint, 0644);
+static unsigned int attempts;
+module_param(attempts, uint, 0444);
+
+static int lumia_modem_check(void)
+{
+	if (!boot_enabled)
+		return -EPERM;
+	if (pil_msa_image_rejected())
+		return -EIO;
+	if (attempts >= max_attempts)
+		return -ENODEV;
+	return 0;
+}
+
+static int lumia_modem_gate(void)
+{
+	static int refused;
+	int ret;
+
+	if (!msm_tz_restricted())
+		return 0;
+	ret = lumia_modem_check();
+	if (ret) {
+		/* Clients retry every 1-2 s: log each reason once. */
+		if (refused != ret) {
+			refused = ret;
+			pr_warn("pil-q6v5-mss: lumia: modem start refused (%s)\n",
+				ret == -EPERM ? "boot_enabled=0" :
+				ret == -EIO ? "image rejected earlier" :
+				"start attempts used up");
+		}
+		return ret;
+	}
+	attempts++;
+	pr_info("pil-q6v5-mss: lumia: modem start attempt %u of %u\n",
+		attempts, max_attempts);
+	return 0;
+}
+
+static void lumia_modem_off_work(struct work_struct *work)
+{
+	struct modem_data *drv = container_of(work, struct modem_data,
+					      lumia_off_work);
+
+	pil_shutdown(&drv->mba->desc);
+	pil_shutdown(&drv->q6->desc);
+	pr_err("pil-q6v5-mss: lumia: modem shut down, left off until reboot\n");
+}
+
+/* Called for every restart request, from the crash handlers or others. */
+static bool lumia_modem_may_restart(const struct subsys_desc *subsys)
+{
+	struct modem_data *drv = subsys_to_drv(subsys);
+	int ret;
+
+	if (!msm_tz_restricted())
+		return true;
+	ret = lumia_modem_check();
+	if (!ret)
+		return true;
+	pr_err("pil-q6v5-mss: lumia: no modem restart allowed (%d, %u of %u attempts used)\n",
+	       ret, attempts, max_attempts);
+	drv->ignore_errors = true;
+	schedule_work(&drv->lumia_off_work);
+	return false;
 }
 
 static void restart_modem(struct modem_data *drv)
@@ -131,33 +224,6 @@ static int modem_shutdown(const struct subsys_desc *subsys)
 	return 0;
 }
 
-/*
- * Lumia 1520: the modem starts at most max_attempts times per boot, as the
- * stock firmware allows (MaxRestartCount 3). A failed PBL does not answer
- * again until the MSS is power cycled, and every QMI/SMD client retries
- * subsystem_get("modem") every 1-2 s, so further attempts are refused
- * without touching the hardware. boot_enabled=0 keeps the modem off.
- */
-static bool boot_enabled = true;
-module_param(boot_enabled, bool, 0644);
-static unsigned int max_attempts = 3;
-module_param(max_attempts, uint, 0644);
-static unsigned int attempts;
-module_param(attempts, uint, 0444);
-
-static int bandit_modem_gate(void)
-{
-	if (!msm_tz_restricted())
-		return 0;
-	if (!boot_enabled)
-		return -EPERM;
-	if (attempts >= max_attempts)
-		return -ENODEV;
-	attempts++;
-	pr_info("pil-q6v5-mss: bandit: modem start attempt %u\n", attempts);
-	return 0;
-}
-
 static int modem_powerup(const struct subsys_desc *subsys)
 {
 	struct modem_data *drv = subsys_to_drv(subsys);
@@ -165,7 +231,7 @@ static int modem_powerup(const struct subsys_desc *subsys)
 
 	if (subsys->is_not_loadable)
 		return 0;
-	ret = bandit_modem_gate();
+	ret = lumia_modem_gate();
 	if (ret)
 		return ret;
 	/*
@@ -246,7 +312,7 @@ static int mss_start(const struct subsys_desc *desc)
 
 	if (desc->is_not_loadable)
 		return 0;
-	ret = bandit_modem_gate();
+	ret = lumia_modem_gate();
 	if (ret)
 		return ret;
 
@@ -282,6 +348,7 @@ static int __devinit pil_subsys_init(struct modem_data *drv,
 	drv->subsys_desc.shutdown = modem_shutdown;
 	drv->subsys_desc.powerup = modem_powerup;
 	drv->subsys_desc.ramdump = modem_ramdump;
+	drv->subsys_desc.may_restart = lumia_modem_may_restart;
 	drv->subsys_desc.crash_shutdown = modem_crash_shutdown;
 	drv->subsys_desc.start = mss_start;
 	drv->subsys_desc.stop = mss_stop;
@@ -448,6 +515,7 @@ static int __devinit pil_mss_driver_probe(struct platform_device *pdev)
 			return ret;
 	}
 	init_completion(&drv->stop_ack);
+	INIT_WORK(&drv->lumia_off_work, lumia_modem_off_work);
 
 	return pil_subsys_init(drv, pdev);
 }

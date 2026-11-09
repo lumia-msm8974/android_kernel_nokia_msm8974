@@ -69,6 +69,32 @@ module_param(pbl_mba_boot_timeout_ms, int, S_IRUGO | S_IWUSR);
 static int modem_auth_timeout_ms = 10000;
 module_param(modem_auth_timeout_ms, int, S_IRUGO | S_IWUSR);
 
+/*
+ * Set once the PBL or the MBA has rejected an image, or the TrustZone has
+ * refused to decrypt one, in this boot. A rejection is not transient: the
+ * same images are rejected again, a PBL that returned an error does not
+ * answer again until the MSS is power cycled (Lumia 1520), and on the
+ * Lumia 950 XL the RMB registers fault on the next access after the MBA
+ * rejected the modem, which panics the kernel on the retry. The Lumia
+ * modem gate (pil-q6v5-mss.c) refuses further starts once this is set.
+ * Timeouts do not set it.
+ */
+static bool image_rejected;
+
+bool pil_msa_image_rejected(void)
+{
+	return image_rejected;
+}
+
+static void pil_msa_set_rejected(struct device *dev, int ret)
+{
+	if (ret == -ENOMEM || image_rejected)
+		return;
+	image_rejected = true;
+	dev_err(dev, "image rejected (%d): no further modem start in this boot\n",
+		ret);
+}
+
 static int pil_msa_pbl_power_up(struct q6v5_data *drv)
 {
 	int ret = 0;
@@ -155,6 +181,7 @@ static int pil_msa_wait_for_mba_ready(struct q6v5_data *drv)
 	}
 	if (status != STATUS_PBL_SUCCESS) {
 		dev_err(dev, "PBL returned unexpected status %d\n", status);
+		pil_msa_set_rejected(dev, -EINVAL);
 		return -EINVAL;
 	}
 
@@ -168,6 +195,7 @@ static int pil_msa_wait_for_mba_ready(struct q6v5_data *drv)
 	if (status != STATUS_XPU_UNLOCKED &&
 	    status != STATUS_XPU_UNLOCKED_SCRIBBLED) {
 		dev_err(dev, "MBA returned unexpected status %d\n", status);
+		pil_msa_set_rejected(dev, -EINVAL);
 		return -EINVAL;
 	}
 
@@ -285,13 +313,18 @@ static void pil_msa_pbl_remove_proxy_votes(struct pil_desc *pil)
 	regulator_set_voltage(drv->vreg_mx, 0, MAX_VDD_MX_UV);
 }
 
-/* Lumia 1520: the stock MBA is SSD encrypted; the TZ decrypts it in place. */
+/* Lumia 1520/930: the stock MBA is SSD encrypted; the TZ decrypts it in place. */
 static int pil_msa_pbl_decrypt_seg(struct pil_desc *pil, int num,
 				   phys_addr_t paddr, size_t size)
 {
+	int ret;
+
 	if (!msm_tz_restricted())
 		return 0;
-	return pil_ssd_decrypt_image(pil->dev, paddr, size);
+	ret = pil_ssd_decrypt_image(pil->dev, paddr, size);
+	if (ret)
+		pil_msa_set_rejected(pil->dev, ret);
+	return ret;
 }
 
 struct pil_reset_ops pil_msa_pbl_ops = {
@@ -312,11 +345,13 @@ static int pil_msa_mba_init_image(struct pil_desc *pil,
 	int ret;
 	DEFINE_DMA_ATTRS(attrs);
 
-	/* Lumia 1520: open the SSD context of the encrypted segments. */
+	/* Lumia 1520/930: open the SSD context of the encrypted segments. */
 	if (msm_tz_restricted()) {
 		ret = pil_ssd_parse_md(pil->dev, metadata, size, &drv->ssd);
-		if (ret)
+		if (ret) {
+			pil_msa_set_rejected(pil->dev, ret);
 			return ret;
+		}
 	}
 
 	dma_set_attr(DMA_ATTR_STRONGLY_ORDERED, &attrs);
@@ -345,6 +380,7 @@ static int pil_msa_mba_init_image(struct pil_desc *pil,
 	} else if (status < 0) {
 		dev_err(pil->dev, "MBA returned error %d for headers\n",
 				status);
+		pil_msa_set_rejected(pil->dev, -EINVAL);
 		ret = -EINVAL;
 	}
 
@@ -372,6 +408,7 @@ static int pil_msa_mba_verify_blob(struct pil_desc *pil, phys_addr_t phy_addr,
 	status = readl_relaxed(drv->rmb_base + RMB_MBA_STATUS);
 	if (status < 0) {
 		dev_err(pil->dev, "MBA returned error %d\n", status);
+		pil_msa_set_rejected(pil->dev, -EINVAL);
 		return -EINVAL;
 	}
 
@@ -392,6 +429,7 @@ static int pil_msa_mba_auth(struct pil_desc *pil)
 		dev_err(pil->dev, "MBA authentication of image timed out\n");
 	} else if (status < 0) {
 		dev_err(pil->dev, "MBA returned error %d for image\n", status);
+		pil_msa_set_rejected(pil->dev, -EINVAL);
 		ret = -EINVAL;
 	}
 
@@ -402,8 +440,12 @@ static int pil_msa_mba_decrypt_seg(struct pil_desc *pil, int num,
 				   phys_addr_t paddr, size_t size)
 {
 	struct mba_data *drv = container_of(pil, struct mba_data, desc);
+	int ret;
 
-	return pil_ssd_decrypt_seg(pil->dev, &drv->ssd, num, paddr, size);
+	ret = pil_ssd_decrypt_seg(pil->dev, &drv->ssd, num, paddr, size);
+	if (ret)
+		pil_msa_set_rejected(pil->dev, ret);
+	return ret;
 }
 
 struct pil_reset_ops pil_msa_mba_ops = {
