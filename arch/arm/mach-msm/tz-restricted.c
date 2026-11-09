@@ -30,6 +30,12 @@
 #include <linux/device.h>
 #include <linux/moduleparam.h>
 #include <linux/pm_wakeup.h>
+#include <linux/suspend.h>
+#include <linux/timer.h>
+#include <linux/sched.h>
+#include <linux/freezer.h>
+#include <linux/notifier.h>
+#include <asm/smp.h>
 #include <mach/tz-restricted.h>
 
 static int tz_restricted_param = -1;
@@ -117,3 +123,73 @@ static int __init tz_restricted_nosuspend_init(void)
 	return 0;
 }
 late_initcall(tz_restricted_nosuspend_init);
+
+/*
+ * Suspend watchdog: if a suspend/resume cycle has not finished after
+ * suspend_wd_secs (time spent asleep does not count, jiffies stop), dump
+ * the suspending task, the blocked tasks that are not frozen and every CPU,
+ * then panic. The panic reboot is warm on this phone, so the dump survives
+ * in the ram_console (/proc/last_kmsg). 0 disables it.
+ */
+static unsigned int suspend_wd_secs = 60;
+module_param(suspend_wd_secs, uint, 0644);
+
+static struct timer_list suspend_wd;
+static struct task_struct *suspend_task;
+
+static void suspend_wd_fire(unsigned long data)
+{
+	struct task_struct *g, *p;
+
+	pr_emerg("tz_restricted: suspend not finished after %u s\n",
+		 suspend_wd_secs);
+	if (suspend_task) {
+		pr_emerg("suspending task:\n");
+		sched_show_task(suspend_task);
+	}
+	pr_emerg("blocked tasks that are not frozen:\n");
+	rcu_read_lock();
+	do_each_thread(g, p) {
+		if (p->state == TASK_UNINTERRUPTIBLE && !frozen(p))
+			sched_show_task(p);
+	} while_each_thread(g, p);
+	rcu_read_unlock();
+	pr_emerg("all CPUs:\n");
+	smp_send_all_cpu_backtrace();
+	panic("tz_restricted: system suspend hang");
+}
+
+static int suspend_wd_notify(struct notifier_block *nb, unsigned long event,
+			     void *unused)
+{
+	switch (event) {
+	case PM_SUSPEND_PREPARE:
+		if (!suspend_wd_secs)
+			break;
+		get_task_struct(current);
+		suspend_task = current;
+		mod_timer(&suspend_wd, jiffies + suspend_wd_secs * HZ);
+		break;
+	case PM_POST_SUSPEND:
+		del_timer_sync(&suspend_wd);
+		if (suspend_task) {
+			put_task_struct(suspend_task);
+			suspend_task = NULL;
+		}
+		break;
+	}
+	return NOTIFY_DONE;
+}
+
+static struct notifier_block suspend_wd_nb = {
+	.notifier_call = suspend_wd_notify,
+};
+
+static int __init tz_restricted_suspend_wd_init(void)
+{
+	if (!msm_tz_restricted())
+		return 0;
+	setup_timer(&suspend_wd, suspend_wd_fire, 0);
+	return register_pm_notifier(&suspend_wd_nb);
+}
+late_initcall(tz_restricted_suspend_wd_init);
