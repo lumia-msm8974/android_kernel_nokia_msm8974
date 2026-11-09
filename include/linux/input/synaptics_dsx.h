@@ -76,6 +76,14 @@ struct synaptics_rmi4_platform_data {
 	unsigned disp_maxy;
 	unsigned reset_delay;
 	const char *fw_image_name;
+	/*
+	 * F12 ctrl18 double tap timing for the wake gesture, programmed
+	 * when the screen turns off: maximum time between the taps in
+	 * 10 ms units and maximum distance in 0.1 mm units. 0 keeps the
+	 * firmware value.
+	 */
+	u32 dtap_max_time;
+	u32 dtap_max_dist;
 	int (*gpio_config)(unsigned gpio, bool configure);
 	struct synaptics_rmi4_capacitance_button_map *capacitance_button_map;
 };

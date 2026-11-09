@@ -261,11 +261,14 @@ struct synaptics_rmi4_data {
 	bool wake_gesture_active;
 	bool sys_suspended;
 	struct completion sys_resumed;
+	unsigned short f12_ctrl18_addr;
+	bool f12_ctrl18_present;
 	unsigned short f12_ctrl20_addr;
 	unsigned short f12_data4_addr;
 	unsigned char f12_intr_reg;
 	unsigned char f12_intr_mask;
 	unsigned char saved_intr_enable[MAX_INTR_REGISTERS];
+	struct mutex wake_gesture_mutex;	/* screen on/off vs sysfs */
 	int (*i2c_read)(struct synaptics_rmi4_data *pdata, unsigned short addr,
 			unsigned char *data, unsigned short length);
 	int (*i2c_write)(struct synaptics_rmi4_data *pdata, unsigned short addr,
