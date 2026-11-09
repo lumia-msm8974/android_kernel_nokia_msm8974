@@ -61,6 +61,25 @@ extern struct clock_init_data msmkrypton_clock_init_data;
 int msm_clock_init(struct clock_init_data *data);
 int find_vdd_level(struct clk *clk, unsigned long rate);
 
+/*
+ * Firmware boots (restricted TrustZone) keep the handoff votes of the
+ * clocks and voltage classes found on at boot. Groups of those votes that
+ * msm_clock_handoff_set() can drop and take back at runtime.
+ */
+#define HANDOFF_GRP_BUS		BIT(0)	/* RPM NoC/BIMC clocks and voters */
+#define HANDOFF_GRP_QDSS	BIT(1)	/* RPM QDSS (debug) clock */
+#define HANDOFF_GRP_GPU		BIT(2)	/* RPM GFX3D, OCMEM, oxili clocks */
+#define HANDOFF_GRP_MMSS	BIT(3)	/* multimedia local clocks, MMSS AXI */
+#define HANDOFF_GRP_VDD_DIG	BIT(4)	/* vdd_dig (CX) held at its top corner */
+#define HANDOFF_GRP_KRAIT	BIT(5)	/* Krait, L2, HFPLL voltages at max */
+#define HANDOFF_GRP_REST	BIT(6)	/* every other GCC clock */
+#define HANDOFF_GRP_ALL		0x7f
+#define HANDOFF_GRP_KEEP	BIT(31)	/* never dropped */
+
+struct seq_file;
+int msm_clock_handoff_set(unsigned int release);
+void msm_clock_handoff_show(struct seq_file *m);
+
 #ifdef CONFIG_DEBUG_FS
 int clock_debug_register(struct clk_lookup *t, size_t s);
 void clock_debug_print_enabled(void);
