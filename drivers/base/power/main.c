@@ -389,6 +389,20 @@ static void dpm_show_time(ktime_t starttime, pm_message_t state, char *info)
 		usecs / USEC_PER_MSEC, usecs % USEC_PER_MSEC);
 }
 
+/**
+ * dpm_skip_device - Platform hook: keep a device out of system suspend.
+ * @dev: Device about to be suspended.
+ *
+ * When it returns true, none of the suspend, late, noirq or resume callbacks
+ * of @dev and of its ancestors run in this transition: the device stays
+ * active as at runtime. Meant for boards whose firmware leaves hardware in a
+ * state that a driver cannot bring back after a suspend.
+ */
+bool __weak dpm_skip_device(struct device *dev)
+{
+	return false;
+}
+
 static int dpm_run_callback(pm_callback_t cb, struct device *dev,
 			    pm_message_t state, char *info)
 {
@@ -397,6 +411,11 @@ static int dpm_run_callback(pm_callback_t cb, struct device *dev,
 
 	if (!cb)
 		return 0;
+
+	if (dev->power.skip_sleep) {
+		pm_dev_dbg(dev, state, "skipped ");
+		return 0;
+	}
 
 	calltime = initcall_debug_start(dev);
 
@@ -1157,6 +1176,18 @@ static int __device_suspend(struct device *dev, pm_message_t state, bool async)
 
 	device_lock(dev);
 
+	/*
+	 * A skipped device keeps its parent awake too: children are suspended
+	 * first, so the parent sees the flag before its own turn.
+	 */
+	if (dev->power.skip_sleep || dpm_skip_device(dev)) {
+		dev->power.skip_sleep = true;
+		if (dev->parent)
+			dev->parent->power.skip_sleep = true;
+		pm_dev_dbg(dev, state, "skipped ");
+		goto End;
+	}
+
 	if (dev->pm_domain) {
 		info = "power domain ";
 		callback = pm_op(&dev->pm_domain->ops, state);
@@ -1319,6 +1350,7 @@ static int device_prepare(struct device *dev, pm_message_t state)
 	device_lock(dev);
 
 	dev->power.wakeup_path = device_may_wakeup(dev);
+	dev->power.skip_sleep = false;
 
 	if (dev->pm_domain) {
 		info = "preparing power domain ";
