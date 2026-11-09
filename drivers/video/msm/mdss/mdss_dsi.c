@@ -1754,6 +1754,8 @@ int dsi_panel_device_register(struct device_node *pan_node,
 
 		pinfo->blank_state = MDSS_PANEL_BLANK_UNBLANK;
 		mdss_dsi_clk_ctrl(ctrl_pdata, DSI_ALL_CLKS, 1);
+		if (pinfo->keep_fw_timing && pinfo->type == MIPI_VIDEO_PANEL)
+			mdss_dsi_read_fw_video_cfg(ctrl_pdata);
 		ctrl_pdata->ctrl_state |=
 			(CTRL_STATE_PANEL_INIT | CTRL_STATE_MDP_ACTIVE);
 	} else {

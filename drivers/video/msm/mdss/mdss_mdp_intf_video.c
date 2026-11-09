@@ -821,6 +821,88 @@ error:
 	return ret;
 }
 
+/*
+ * Firmware boot (Lumia 930): the UEFI leaves the interface timing engine
+ * running for its video mode panel. Read the timing back into the panel
+ * info (nokia,keep-firmware-timing), so that the handoff writes the same
+ * values to the running interface and later power ons program the MDP and
+ * the DSI controller with the timing the panel was initialised with. The
+ * device tree timing stays if the registers do not decode to the panel
+ * size (hsync skew and active windows are not expected).
+ */
+static void mdss_mdp_video_read_fw_timing(struct mdss_mdp_video_ctx *ctx,
+					  struct mdss_panel_info *pinfo)
+{
+	u32 hsync_ctl, display_hctl, vperiod, vpulse, vstart, vend;
+	u32 hperiod, hpw, hstart, hend, vtotal, vpw, vbp, vfp, hbp, hfp;
+
+	if (!(mdp_video_read(ctx, MDSS_MDP_REG_INTF_TIMING_ENGINE_EN) & BIT(0))) {
+		pr_info("intf%d: timing engine off, device tree timing kept\n",
+			ctx->intf_num - MDSS_MDP_INTF0);
+		return;
+	}
+
+	hsync_ctl = mdp_video_read(ctx, MDSS_MDP_REG_INTF_HSYNC_CTL);
+	display_hctl = mdp_video_read(ctx, MDSS_MDP_REG_INTF_DISPLAY_HCTL);
+	vperiod = mdp_video_read(ctx, MDSS_MDP_REG_INTF_VSYNC_PERIOD_F0);
+	vpulse = mdp_video_read(ctx, MDSS_MDP_REG_INTF_VSYNC_PULSE_WIDTH_F0);
+	vstart = mdp_video_read(ctx, MDSS_MDP_REG_INTF_DISPLAY_V_START_F0);
+	vend = mdp_video_read(ctx, MDSS_MDP_REG_INTF_DISPLAY_V_END_F0);
+
+	pr_info("intf%d: firmware hsync %08x hctl %08x vperiod %u vpulse %u vstart %u vend %u\n",
+		ctx->intf_num - MDSS_MDP_INTF0, hsync_ctl, display_hctl,
+		vperiod, vpulse, vstart, vend);
+	pr_info("intf%d: firmware active_hctl %08x active_v %08x/%08x skew %u polarity %08x format %08x\n",
+		ctx->intf_num - MDSS_MDP_INTF0,
+		mdp_video_read(ctx, MDSS_MDP_REG_INTF_ACTIVE_HCTL),
+		mdp_video_read(ctx, MDSS_MDP_REG_INTF_ACTIVE_V_START_F0),
+		mdp_video_read(ctx, MDSS_MDP_REG_INTF_ACTIVE_V_END_F0),
+		mdp_video_read(ctx, MDSS_MDP_REG_INTF_HSYNC_SKEW),
+		mdp_video_read(ctx, MDSS_MDP_REG_INTF_POLARITY_CTL),
+		mdp_video_read(ctx, MDSS_MDP_REG_INTF_PANEL_FORMAT));
+
+	hperiod = hsync_ctl >> 16;
+	hpw = hsync_ctl & 0xffff;
+	hstart = display_hctl & 0xffff;
+	hend = display_hctl >> 16;
+	if (!hperiod || hstart < hpw || hend < hstart || hend >= hperiod ||
+	    vperiod % hperiod || vpulse % hperiod || vstart % hperiod ||
+	    (vend + 1) % hperiod)
+		goto mismatch;
+
+	hbp = hstart - hpw;
+	hfp = hperiod - 1 - hend;
+	vtotal = vperiod / hperiod;
+	vpw = vpulse / hperiod;
+	if (vstart / hperiod < vpw || (vend + 1) / hperiod > vtotal)
+		goto mismatch;
+	vbp = vstart / hperiod - vpw;
+	vfp = vtotal - (vend + 1) / hperiod;
+
+	if (hperiod - hpw - hbp - hfp != pinfo->xres + pinfo->lcdc.xres_pad ||
+	    vtotal - vpw - vbp - vfp != pinfo->yres + pinfo->lcdc.yres_pad)
+		goto mismatch;
+
+	pr_info("intf%d: firmware timing h %u/%u/%u v %u/%u/%u (fp/bp/pw), device tree h %u/%u/%u v %u/%u/%u\n",
+		ctx->intf_num - MDSS_MDP_INTF0, hfp, hbp, hpw, vfp, vbp, vpw,
+		pinfo->lcdc.h_front_porch, pinfo->lcdc.h_back_porch,
+		pinfo->lcdc.h_pulse_width, pinfo->lcdc.v_front_porch,
+		pinfo->lcdc.v_back_porch, pinfo->lcdc.v_pulse_width);
+
+	pinfo->lcdc.h_front_porch = hfp;
+	pinfo->lcdc.h_back_porch = hbp;
+	pinfo->lcdc.h_pulse_width = hpw;
+	pinfo->lcdc.v_front_porch = vfp;
+	pinfo->lcdc.v_back_porch = vbp;
+	pinfo->lcdc.v_pulse_width = vpw;
+	pinfo->lcdc.hsync_skew = 0;
+	return;
+
+mismatch:
+	pr_warn("intf%d: firmware timing not %ux%u, device tree timing kept\n",
+		ctx->intf_num - MDSS_MDP_INTF0, pinfo->xres, pinfo->yres);
+}
+
 int mdss_mdp_video_start(struct mdss_mdp_ctl *ctl)
 {
 	struct mdss_data_type *mdata;
@@ -863,6 +945,10 @@ int mdss_mdp_video_start(struct mdss_mdp_ctl *ctl)
 				   mdss_mdp_video_vsync_intr_done, ctl);
 	mdss_mdp_set_intr_callback(MDSS_MDP_IRQ_INTF_UNDER_RUN, ctl->intf_num,
 				   mdss_mdp_video_underrun_intr_done, ctl);
+
+	if (pinfo->cont_splash_enabled && pinfo->keep_fw_timing &&
+	    !pinfo->fbc.enabled)
+		mdss_mdp_video_read_fw_timing(ctx, pinfo);
 
 	dst_bpp = pinfo->fbc.enabled ? (pinfo->fbc.target_bpp) : (pinfo->bpp);
 
