@@ -73,8 +73,9 @@
 	 * Touchscreen: Synaptics RMI4, from the stock DSDT (NOKIA_TOUCH):
 	 * BLSP1 QUP2 at 0x4b, interrupt TLMM 61 (falling, needs the pull-up
 	 * set by the board file), enable TLMM 60. Same wiring as the 1520.
-	 * Supplies are not in the DSDT: L22 (3.0 V) and L6 (1.8 V, I2C pull-up)
-	 * as the 1520 and the mainline port use them.
+	 * Stock PEP (\_SB.TSC1 D0): L22 at 3.0 V, 2 ms, enable TLMM 60 high,
+	 * 60 ms; no I/O rail is listed. L6 (1.8 V, I2C pull-up) is kept as on
+	 * the 1520 and in the mainline port, where touch works on the 930.
 	 */
 	i2c@f9924000 {
 		synaptics@4b {
@@ -115,12 +116,18 @@
 
 	/*
 	 * BLSP1 QUP3: ambient light/proximity APDS-9930 at 0x39 (stock SSDT
-	 * QPDS_APS); its interrupt is TLMM 74 (edge, active low), polled by
-	 * the driver for now.
-	 * TODO(martini): read the APS power resources in the SSDT for the
-	 * VDD/VIO rails (none listed: the driver works without them).
-	 * TODO(martini): accelerometer, gyroscope and magnetometer (bus,
-	 * address, chip) from the DSDT (\_SB.SEN*); not described yet.
+	 * \_SB.APS1, QPDS_APS, 400 kHz); its interrupt is TLMM 74 (edge,
+	 * active low, pull-up), polled by the driver for now. Stock PEP: L18
+	 * at 2.85 V and LVS3 (1.8 V), both left on by the firmware, which
+	 * nothing here turns off (no full regulator constraints on firmware
+	 * boots).
+	 * Accelerometer, gyroscope and magnetometer: none on an application
+	 * processor bus. The only motion sensor device is \_SB.SEN1
+	 * (QCOM2495, SSDT), which depends on the ADSP and IPC0 and only gives
+	 * the mounting matrices (AROT, GROT, MROT) and the Nokia step counter,
+	 * gesture and activity algorithms: the chips are driven by the
+	 * Qualcomm Sensor Core on the ADSP, as on the Nexus 5. The sensors of
+	 * the 1520 (BLSP2 QUP6) are not present.
 	 */
 	i2c@f9925000 { /* BLSP1 QUP3 */
 		cell-index = <4>;
@@ -315,9 +322,14 @@
  * 900 mA, minimum input 4.30 V, recharge below 4.00 V (vbatdet delta).
  * VDD_SAFE is write-once on the PM8941 and left by the UEFI, so it is not
  * set here. Safety timer raised for 2420 mAh at 900 mA.
+ * Qi wireless charging (stock SSDT \_SB.NEDD, NOKI0B00, the Nokia energy
+ * driver): interrupts DCIN_VALID, BATT_PRES, WC_DET and CHG_GONE; outputs
+ * WC_EN = PM8941 GPIO 7, WC_DET = GPIO 6 (input, pull-up, wake),
+ * WC_PMA = GPIO 22. The receiver feeds the PM8941 DC input; GPIO 6, 7 and
+ * 22 are left as the UEFI set them.
  * TODO(martini): read BATTERY.PROVISION / battery.json on the phone before
- * raising the limits towards 4.35 V; Qi wireless charging (DC path) is
- * not described.
+ * raising the limits towards 4.35 V; describe WC_EN/WC_DET if the DC path
+ * does not charge on its own.
  */
 &pm8941_bms {
 	status = "ok";
@@ -385,7 +397,9 @@
 
 	/*
 	 * GPIO 8: VIBRA_AMP_EN, enable of the motor driver (17.1 Lumia 930
-	 * kernel). Digital output, low until the vibrator driver raises it.
+	 * kernel; stock DSDT \_SB.VIB1 NOKIA_VIBRA and SSDT \_SB.VIB2 ODDT_VIB:
+	 * PM8941 GPIO 8, pull-down). Digital output, low until the vibrator
+	 * driver raises it.
 	 */
 	gpio@c700 {
 		qcom,mode = <1>;
@@ -398,7 +412,8 @@
 	};
 
 	/*
-	 * GPIO 20: IHF_EN, nSHUTDOWN of the TAS2552 (17.1 Lumia 930 kernel).
+	 * GPIO 20: IHF_EN, nSHUTDOWN of the TAS2552 (17.1 Lumia 930 kernel;
+	 * stock DSDT \_SB.VISA: I2C5 at 0x40 and PM8941 GPIO 20).
 	 * Low until the amplifier driver raises it.
 	 */
 	gpio@d300 {
@@ -763,9 +778,18 @@
 };
 
 /*
- * Copied from bandit: panel and DSI PHY rails, MDSS GDSC never cut. With
- * MDSS off nothing else votes for them, and the UEFI panel must stay lit.
- * TODO(martini): AMOLED power rails (ELVDD/ELVSS) from the DSDT.
+ * Panel and DSI rails, MDSS GDSC never cut: with MDSS off nothing else
+ * votes for them, and the UEFI panel must stay lit. Stock PEP: the MDP
+ * (\_SB.GPU0) uses L2 (1.2 V) and L12 (1.8 V); the panel (\_SB.DISP) uses
+ * LVS1 (1.8 V), then 25 ms, then PM8941 GPIO 19 (reset) as a high output
+ * (VIN2), and the reverse at power off (reset low, 10 ms, LVS1 off).
+ * There is no AMOLED ELVDD/ELVSS rail on the SoC side: the panel module
+ * makes them. L22 (3.0 V) is the touch rail (\_SB.TSC1), kept on for the
+ * wakeup gesture.
+ * \_SB.DISP also lists TLMM 12 (MDP_VSYNC, the panel TE) and TLMM 32, 33
+ * and 34 (roles unknown, not touched).
+ * TODO(martini): before the MDSS switch, give the panel LVS1 as its
+ * supply (the base DSI node uses L22, an MTP choice).
  */
 &pm8941_l2 {
 	regulator-always-on;
@@ -774,6 +798,9 @@
 	regulator-always-on;
 };
 &pm8941_l22 {
+	regulator-always-on;
+};
+&pm8941_lvs1 {
 	regulator-always-on;
 };
 &gdsc_mdss {
