@@ -1,0 +1,30 @@
+/*
+ * Nokia Lumia 1520 (bandit) camera identification test DTB.
+ *
+ * Same board as msm8974-v2.2-bandit.dts, with the read-only camera sensor
+ * identification probe nodes enabled. Build it on its own and append it to
+ * zImage in place of the normal DTB (see kit/camera/README). Nothing else
+ * changes; the camera stays off until the probe is triggered through
+ * /sys/kernel/debug/nokia_camprobe/scan.
+ *
+ * Copyright (c) 2026, Lorenzo Giannoccaro. GPLv2 only.
+ */
+
+/dts-v1/;
+
+/include/ "msm8974-v2.2.dtsi"
+/include/ "msm8974-bandit/msm8974-bandit.dtsi"
+
+/ {
+	model = "Nokia Lumia 1520";
+	compatible = "nokia,bandit", "qcom,msm8974";
+	qcom,msm-id = <126 0 0x20002>;
+};
+
+&cam_probe_rear {
+	status = "ok";
+};
+
+&cam_probe_front {
+	status = "ok";
+};

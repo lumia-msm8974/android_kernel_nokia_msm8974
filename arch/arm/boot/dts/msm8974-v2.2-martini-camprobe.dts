@@ -1,0 +1,30 @@
+/*
+ * Nokia Lumia 930 (martini) camera identification test DTB.
+ *
+ * Same board as msm8974-v2.2-martini.dts, with the read-only camera sensor
+ * identification probe nodes enabled. Build it on its own and append it to
+ * zImage in place of the normal DTB (see kit/camera/README). Nothing else
+ * changes; the camera stays off until the probe is triggered through
+ * /sys/kernel/debug/nokia_camprobe/scan.
+ *
+ * Copyright (c) 2026, Lorenzo Giannoccaro. GPLv2 only.
+ */
+
+/dts-v1/;
+
+/include/ "msm8974-v2.2.dtsi"
+/include/ "msm8974-martini/msm8974-martini.dtsi"
+
+/ {
+	model = "Nokia Lumia 930";
+	compatible = "nokia,martini", "qcom,msm8974";
+	qcom,msm-id = <126 0x96 0x20002>;
+};
+
+&cam_probe_rear {
+	status = "ok";
+};
+
+&cam_probe_front {
+	status = "ok";
+};

@@ -1006,3 +1006,6 @@
 		};
 	};
 };
+
+/* Camera (Karma rear, Skype_HD front); nodes disabled unless a test DTB enables them. */
+/include/ "../msm8974-camera-sensor-lumia.dtsi"
