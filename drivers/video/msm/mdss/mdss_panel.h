@@ -145,6 +145,12 @@ struct mdss_panel_recovery {
  *				based on the dsi mode passed as argument.
  *				- 0: update to video mode
  *				- 1: update to command mode
+ * @MDSS_EVENT_PANEL_VIDEO_DOZE: Video mode panel with doze commands
+ *				(panel_info.video_doze): switch the panel
+ *				to or from its own low power mode while the
+ *				MDP keeps streaming frames.
+ *				- 1: enter doze
+ *				- 0: back to normal mode
  */
 enum mdss_intf_events {
 	MDSS_EVENT_RESET = 1,
@@ -165,6 +171,7 @@ enum mdss_intf_events {
 	MDSS_EVENT_ENABLE_PARTIAL_UPDATE,
 	MDSS_EVENT_REGISTER_RECOVERY_HANDLER,
 	MDSS_EVENT_DSI_DYNAMIC_SWITCH,
+	MDSS_EVENT_PANEL_VIDEO_DOZE,
 };
 
 struct lcd_panel_info {
@@ -356,6 +363,8 @@ struct mdss_panel_info {
 	u32 cont_splash_enabled;
 	/* video mode: take the timing and DSI setup left by the firmware */
 	bool keep_fw_timing;
+	/* video mode: panel commands for a low power doze state */
+	bool video_doze;
 	u32 partial_update_enabled;
 	struct ion_handle *splash_ihdl;
 	int panel_power_state;

@@ -533,6 +533,53 @@ static int mdss_dsi_panel_low_power_config(struct mdss_panel_data *pdata,
 	return 0;
 }
 
+/*
+ * Doze (ambient display) on a video mode panel: the MDP keeps streaming
+ * frames and only the panel changes mode, through the optional
+ * nokia,mdss-dsi-doze-on-command / -off-command sequences (for instance
+ * DCS idle mode on/off). Sent while the link is up, like the DCS
+ * brightness, so blank_state and the power state are left alone: a screen
+ * off from doze still runs the normal off path, and the next screen on
+ * resets the panel.
+ */
+int mdss_dsi_panel_video_doze(struct mdss_panel_data *pdata, int enable)
+{
+	struct mdss_dsi_ctrl_pdata *ctrl;
+	struct dsi_panel_cmds *pcmds;
+	struct dcs_cmd_req cmdreq;
+
+	if (pdata == NULL) {
+		pr_err("%s: Invalid input data\n", __func__);
+		return -EINVAL;
+	}
+
+	ctrl = container_of(pdata, struct mdss_dsi_ctrl_pdata, panel_data);
+	if (!pdata->panel_info.video_doze)
+		return -ENODEV;
+	if (!mdss_dsi_is_panel_on_interactive(pdata)) {
+		pr_err("%s: panel not on (state %d)\n", __func__,
+			pdata->panel_info.panel_power_state);
+		return -EPERM;
+	}
+
+	pcmds = enable ? &ctrl->doze_on_cmds : &ctrl->doze_off_cmds;
+
+	memset(&cmdreq, 0, sizeof(cmdreq));
+	cmdreq.cmds = pcmds->cmds;
+	cmdreq.cmds_cnt = pcmds->cmd_cnt;
+	cmdreq.flags = CMD_REQ_COMMIT | CMD_CLK_CTRL;
+	if (pcmds->link_state == DSI_LP_MODE)
+		cmdreq.flags |= CMD_REQ_LP_MODE;
+	cmdreq.rlen = 0;
+	cmdreq.cb = NULL;
+
+	mdss_dsi_cmdlist_put(ctrl, &cmdreq);
+
+	pr_info("%s: ndx=%d %s\n", __func__, ctrl->ndx,
+		enable ? "doze" : "normal");
+	return 0;
+}
+
 static void mdss_dsi_parse_lane_swap(struct device_node *np, char *dlane_swap)
 {
 	const char *data;
@@ -663,6 +710,38 @@ int mdss_dsi_parse_dcs_cmds(struct device_node *np,
 exit_free:
 	kfree(buf);
 	return -ENOMEM;
+}
+
+static void mdss_dsi_parse_video_doze(struct device_node *np,
+		struct mdss_dsi_ctrl_pdata *ctrl)
+{
+	struct mdss_panel_info *pinfo = &ctrl->panel_data.panel_info;
+
+	pinfo->video_doze = false;
+	if (!of_find_property(np, "nokia,mdss-dsi-doze-on-command", NULL) &&
+	    !of_find_property(np, "nokia,mdss-dsi-doze-off-command", NULL))
+		return;
+
+	if (pinfo->mipi.mode != DSI_VIDEO_MODE) {
+		pr_err("%s: doze commands are for video mode panels\n",
+			__func__);
+		return;
+	}
+
+	if (mdss_dsi_parse_dcs_cmds(np, &ctrl->doze_on_cmds,
+			"nokia,mdss-dsi-doze-on-command",
+			"nokia,mdss-dsi-doze-on-command-state") ||
+	    mdss_dsi_parse_dcs_cmds(np, &ctrl->doze_off_cmds,
+			"nokia,mdss-dsi-doze-off-command",
+			"nokia,mdss-dsi-doze-off-command-state") ||
+	    !ctrl->doze_on_cmds.cmd_cnt || !ctrl->doze_off_cmds.cmd_cnt) {
+		pr_err("%s: doze needs both on and off commands\n", __func__);
+		return;
+	}
+
+	pinfo->video_doze = true;
+	pr_info("%s: video mode doze: %d on, %d off commands\n", __func__,
+		ctrl->doze_on_cmds.cmd_cnt, ctrl->doze_off_cmds.cmd_cnt);
 }
 
 
@@ -1310,6 +1389,8 @@ static int mdss_panel_parse_dt(struct device_node *np,
 
 	mdss_dsi_parse_dcs_cmds(np, &ctrl_pdata->off_cmds,
 		"qcom,mdss-dsi-off-command", "qcom,mdss-dsi-off-command-state");
+
+	mdss_dsi_parse_video_doze(np, ctrl_pdata);
 
 	mdss_dsi_parse_dcs_cmds(np, &ctrl_pdata->status_cmds,
 			"qcom,mdss-dsi-panel-status-command",

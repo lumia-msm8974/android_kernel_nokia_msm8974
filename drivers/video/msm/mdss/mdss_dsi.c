@@ -1201,6 +1201,9 @@ static int mdss_dsi_event_handler(struct mdss_panel_data *pdata,
 		rc = mdss_dsi_update_panel_config(ctrl_pdata,
 					(int)(unsigned long) arg);
 		break;
+	case MDSS_EVENT_PANEL_VIDEO_DOZE:
+		rc = mdss_dsi_panel_video_doze(pdata, (int)(unsigned long) arg);
+		break;
 	default:
 		pr_debug("%s: unhandled event=%d\n", __func__, event);
 		break;
