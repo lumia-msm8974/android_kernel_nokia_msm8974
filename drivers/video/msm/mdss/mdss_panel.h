@@ -354,6 +354,8 @@ struct mdss_panel_info {
 	u32 max_fps;
 
 	u32 cont_splash_enabled;
+	/* video mode: take the timing and DSI setup left by the firmware */
+	bool keep_fw_timing;
 	u32 partial_update_enabled;
 	struct ion_handle *splash_ihdl;
 	int panel_power_state;

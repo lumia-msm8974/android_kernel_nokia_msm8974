@@ -900,6 +900,8 @@ static int mdss_dsi_parse_panel_features(struct device_node *np,
 
 	pinfo->cont_splash_enabled = of_property_read_bool(np,
 		"qcom,cont-splash-enabled");
+	pinfo->keep_fw_timing = of_property_read_bool(np,
+		"nokia,keep-firmware-timing");
 
 	pinfo->partial_update_enabled = of_property_read_bool(np,
 		"qcom,partial-update-enabled");

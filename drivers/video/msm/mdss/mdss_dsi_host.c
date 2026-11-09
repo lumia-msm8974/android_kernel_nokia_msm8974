@@ -250,7 +250,8 @@ void mdss_dsi_host_init(struct mdss_panel_data *pdata)
 
 	pinfo = &pdata->panel_info.mipi;
 
-	pinfo->rgb_swap = DSI_RGB_SWAP_RGB;
+	if (!ctrl_pdata->fw_video_cfg)
+		pinfo->rgb_swap = DSI_RGB_SWAP_RGB;
 
 	if (pinfo->mode == DSI_VIDEO_MODE) {
 		data = 0;
@@ -741,6 +742,77 @@ static void mdss_dsi_mode_setup(struct mdss_panel_data *pdata)
 		MIPI_OUTP((ctrl_pdata->ctrl_base) + 0x64, data);
 		MIPI_OUTP((ctrl_pdata->ctrl_base) + 0x5C, data);
 	}
+}
+
+/*
+ * Firmware boot (Lumia 930): the UEFI leaves the video mode panel streaming
+ * and the DSI PHY/PLL are kept as it set them (nokia,keep-firmware-phy).
+ * Read the video mode setup of the controller back into the panel info, so
+ * that the controller setup at the next power on (after a screen off)
+ * programs what the panel was initialised with. The device tree values stay
+ * when the controller is not running in video mode. The video timing is
+ * taken from the MDP interface (mdss_mdp_video_start()).
+ */
+void mdss_dsi_read_fw_video_cfg(struct mdss_dsi_ctrl_pdata *ctrl)
+{
+	struct mipi_panel_info *mipi = &ctrl->panel_data.panel_info.mipi;
+	unsigned char *base = ctrl->ctrl_base;
+	u32 dsi_ctrl, vmode, vdata, clkout, eot, swap;
+
+	dsi_ctrl = MIPI_INP(base + 0x0004);
+	vmode = MIPI_INP(base + 0x0010);
+	vdata = MIPI_INP(base + 0x0020);
+	swap = MIPI_INP(base + 0x00b0);
+	clkout = MIPI_INP(base + 0x00c4);
+	eot = MIPI_INP(base + 0x00cc);
+
+	pr_info("%s: ctrl %08x video %08x data %08x lane_swap %08x clkout %08x eot %08x\n",
+		__func__, dsi_ctrl, vmode, vdata, swap, clkout, eot);
+	pr_info("%s: active_h %08x active_v %08x total %08x hsync %08x vsync_vpos %08x\n",
+		__func__, MIPI_INP(base + 0x0024), MIPI_INP(base + 0x0028),
+		MIPI_INP(base + 0x002c), MIPI_INP(base + 0x0030),
+		MIPI_INP(base + 0x0038));
+
+	/* DSI_CTRL: controller enable (bit 0) and video mode enable (bit 1) */
+	if ((dsi_ctrl & (BIT(0) | BIT(1))) != (BIT(0) | BIT(1)) ||
+	    !(dsi_ctrl & (0xf << 4))) {
+		pr_info("%s: not streaming video, device tree setup kept\n",
+			__func__);
+		return;
+	}
+
+	mipi->pulse_mode_hsa_he = !!(vmode & BIT(28));
+	mipi->hfp_power_stop = !!(vmode & BIT(24));
+	mipi->hbp_power_stop = !!(vmode & BIT(20));
+	mipi->hsa_power_stop = !!(vmode & BIT(16));
+	mipi->eof_bllp_power_stop = !!(vmode & BIT(15));
+	mipi->bllp_power_stop = !!(vmode & BIT(12));
+	mipi->traffic_mode = (vmode >> 8) & 0x03;
+	mipi->dst_format = (vmode >> 4) & 0x03;
+	mipi->vc = vmode & 0x03;
+
+	mipi->rgb_swap = (vdata >> 12) & 0x07;
+	mipi->b_sel = !!(vdata & BIT(8));
+	mipi->g_sel = !!(vdata & BIT(4));
+	mipi->r_sel = !!(vdata & BIT(0));
+
+	mipi->data_lane0 = !!(dsi_ctrl & BIT(4));
+	mipi->data_lane1 = !!(dsi_ctrl & BIT(5));
+	mipi->data_lane2 = !!(dsi_ctrl & BIT(6));
+	mipi->data_lane3 = !!(dsi_ctrl & BIT(7));
+	mipi->dlane_swap = swap & 0x07;
+
+	mipi->t_clk_post = (clkout >> 8) & 0x3f;
+	mipi->t_clk_pre = clkout & 0x3f;
+	mipi->tx_eot_append = !!(eot & BIT(0));
+	mipi->rx_eot_ignore = !!(eot & BIT(4));
+
+	ctrl->fw_video_cfg = true;
+	pr_info("%s: traffic %u pulse %u bllp %u/%u lanes %x swap %u rgb %u t_clk %02x/%02x eot %u\n",
+		__func__, mipi->traffic_mode, mipi->pulse_mode_hsa_he,
+		mipi->bllp_power_stop, mipi->eof_bllp_power_stop,
+		(dsi_ctrl >> 4) & 0xf, mipi->dlane_swap, mipi->rgb_swap,
+		mipi->t_clk_pre, mipi->t_clk_post, mipi->tx_eot_append);
 }
 
 void mdss_dsi_ctrl_setup(struct mdss_dsi_ctrl_pdata *ctrl)
