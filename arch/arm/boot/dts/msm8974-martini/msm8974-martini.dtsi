@@ -147,6 +147,26 @@
 		light-sensor@39 {
 			compatible = "avago,apds9930";
 			reg = <0x39>;
+			/*
+			 * Starting point only, to recheck against a lux meter.
+			 * The stock driver settings (AlsPrxAlphamon, the same
+			 * on the 930 registry and in the shared NMO package)
+			 * give CoeffGA 0x1ba68, B 0x4ada, C 0x53c, D 0x810 on
+			 * the 930 and 0x41b90, 0x45fc, 0x52b, 0x7f3 on the
+			 * 1520, on top of a per-phone DPP calibration not read
+			 * here. The bandit values (GA 51.4, measured; B, C, D
+			 * from the datasheet) are scaled by the 930/1520 ratio
+			 * of each Windows coefficient: GA x0.4207, B x1.0696,
+			 * C x1.0129, D x1.0143.
+			 * Proximity keeps the bandit thresholds: the stock
+			 * static ones are the same on both phones (FarToNear
+			 * 700, NearToFar 600, TargetCrosstalk 100) and this
+			 * driver uses its own pulse count.
+			 */
+			avago,glass-attenuation = <21625>;
+			avago,lux-coeff-b = <1992>;
+			avago,lux-coeff-c = <756>;
+			avago,lux-coeff-d = <1309>;
 		};
 	};
 
