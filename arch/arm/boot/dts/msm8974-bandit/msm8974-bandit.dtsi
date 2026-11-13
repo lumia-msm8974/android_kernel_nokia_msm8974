@@ -694,6 +694,16 @@
  * so the PHY timings below are not written to the hardware.
  */
 &mdss_mdp {
+	/*
+	 * Same as the Lumia 930: with the msm8974 defaults (2.3 GB/s video,
+	 * 3.0 GB/s command mode) the overlay check rejects the notification
+	 * shade over the launcher (4.3 GB/s with the 2x fudge factor) and
+	 * SurfaceFlinger composes it on the busy GPU. Measured on the 930
+	 * (video mode): all layers on MDP pipes, no underrun.
+	 */
+	qcom,max-bandwidth-low-kbps = <4500000>;
+	qcom,max-bandwidth-high-kbps = <4500000>;
+
 	dsi_bandit_smokey_cmd: qcom,mdss_dsi_bandit_smokey_cmd {
 		qcom,mdss-dsi-panel-name = "bandit smokey 1080p cmd";
 		qcom,mdss-dsi-panel-controller = <&mdss_dsi0>;
