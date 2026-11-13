@@ -32,6 +32,11 @@
 #include <linux/slab.h>
 #include <linux/debugfs.h>
 #include <linux/delay.h>
+#include <linux/io.h>
+#include <linux/gpio.h>
+#include <linux/moduleparam.h>
+#include <linux/workqueue.h>
+#include <mach/msm_iomap.h>
 #include <media/msm_cam_sensor.h>
 #include "msm_sensor.h"
 #include "cci/msm_cci.h"
@@ -69,7 +74,79 @@ struct nokia_camprobe {
 	u32 num_addrs;
 	struct dentry *dir;
 	struct mutex lock;
+	struct delayed_work dump_work;
 };
+
+/*
+ * Bring-up diagnostics: TLMM state of the camera pads and the CCI master 0
+ * registers, read while a transfer is pending. Read-only.
+ */
+#define LUMIA_CCI_PHYS	0xfda0c000
+#define TLMM_CFG(n)	(MSM_TLMM_BASE + 0x1000 + 0x10 * (n))
+#define TLMM_INOUT(n)	(MSM_TLMM_BASE + 0x1004 + 0x10 * (n))
+static void __iomem *lumia_cci_base;
+static const u16 lumia_pads[] = { 15, 17, 18, 19, 20, 21, 22, 83, 84, 89, 90,
+				  91, 92 };
+static const u16 lumia_cci_regs[] = { 0x000, 0x100, 0x104, 0x108, 0x10c,
+				      0x110, 0x11c, 0x300, 0x304, 0x308,
+				      0xc04, 0xc0c };
+
+static void nokia_camprobe_dump_hw(const char *when)
+{
+	int i;
+
+	pr_info("hw state (%s):\n", when);
+	for (i = 0; i < ARRAY_SIZE(lumia_pads); i++) {
+		u32 cfg = __raw_readl(TLMM_CFG(lumia_pads[i]));
+		u32 io = __raw_readl(TLMM_INOUT(lumia_pads[i]));
+
+		pr_info("  gpio %3u cfg %03x (func %u pull %u drv %u oe %u) in %u out %u\n",
+			lumia_pads[i], cfg, (cfg >> 2) & 0xf, cfg & 3,
+			(cfg >> 6) & 7, (cfg >> 9) & 1, io & 1, (io >> 1) & 1);
+	}
+	if (!lumia_cci_base)
+		lumia_cci_base = ioremap(LUMIA_CCI_PHYS, 0x1000);
+	if (!lumia_cci_base)
+		return;
+	for (i = 0; i < ARRAY_SIZE(lumia_cci_regs); i++)
+		pr_info("  cci[%03x] = %08x\n", lumia_cci_regs[i],
+			__raw_readl(lumia_cci_base + lumia_cci_regs[i]));
+}
+
+/*
+ * scan_all: besides the DT candidates, try every 7-bit address 0x08-0x77
+ * (address phase plus a 16-bit register pointer, then a read; nothing is
+ * written to any register). extra_high: TLMM GPIOs to drive high after
+ * the DT power sequence and low again before power down, to find the
+ * rails the PEP does not show (the probe DTB frees GPIO 21/22 from CCI).
+ */
+static bool scan_all = true;
+module_param(scan_all, bool, 0644);
+static int extra_high[8];
+static int n_extra_high;
+module_param_array(extra_high, int, &n_extra_high, 0644);
+
+/* settle_ms: wait after power up before scanning; standby_level: value the
+ * DT power sequence drives on the standby GPIO (1 = as in the DT). */
+static int settle_ms;
+module_param(settle_ms, int, 0644);
+static int standby_level = 1;
+module_param(standby_level, int, 0644);
+
+/* cci_master: -1 = as in the DT; 1 = scan CCI master 1, with GPIO 21/22
+ * muxed to function 1 (pull-up) for the duration of the scan. */
+static int cci_master = -1;
+module_param(cci_master, int, 0644);
+
+/* hold_ms: keep the module powered this long after its scan, so another
+ * module can be scanned with these rails on too. */
+static int hold_ms;
+module_param(hold_ms, int, 0644);
+
+static void nokia_camprobe_dump_work(struct work_struct *work)
+{
+	nokia_camprobe_dump_hw("transfer pending");
+}
 
 static int nokia_camprobe_read(struct nokia_camprobe *p, u32 addr, u16 *val,
 			       enum msm_camera_i2c_data_type dt)
@@ -77,15 +154,17 @@ static int nokia_camprobe_read(struct nokia_camprobe *p, u32 addr, u16 *val,
 	return msm_camera_cci_i2c_read(&p->i2c_client, addr, val, dt);
 }
 
-static void nokia_camprobe_dump_ids(struct nokia_camprobe *p, u16 sid)
+static int nokia_camprobe_dump_ids(struct nokia_camprobe *p, u16 sid,
+				   bool quiet)
 {
 	u16 v, model, die_model = 0;
 	int rc;
 
 	rc = nokia_camprobe_read(p, 0x0000, &model, MSM_CAMERA_I2C_WORD_DATA);
 	if (rc < 0) {
-		pr_info("  0x%02x: no ACK (rc %d)\n", sid, rc);
-		return;
+		if (!quiet)
+			pr_info("  0x%02x: no ACK (rc %d)\n", sid, rc);
+		return rc;
 	}
 	pr_info("  0x%02x: ACK, module model_id 0x%04x\n", sid, model);
 
@@ -145,33 +224,109 @@ static void nokia_camprobe_dump_ids(struct nokia_camprobe *p, u16 sid)
 	}
 #undef RD8
 #undef RD16
+	return 0;
 }
 
 static int nokia_camprobe_run(struct nokia_camprobe *p)
 {
+	u32 cfg21 = 0, cfg22 = 0;
 	int rc, i;
 
 	mutex_lock(&p->lock);
-	pr_info("power up (%u candidate address(es), cci master %u)\n",
-		p->num_addrs, p->cci_master);
+	for (i = 0; i < p->power_info.power_setting_size; i++) {
+		struct msm_sensor_power_setting *ps =
+			&p->power_info.power_setting[i];
+
+		if (ps->seq_type == SENSOR_GPIO &&
+		    ps->seq_val == SENSOR_GPIO_STANDBY)
+			ps->config_val = standby_level ? 1 : 0;
+	}
+	pr_info("power up (%u candidate address(es), cci master %u, standby %d, settle %d ms)\n",
+		p->num_addrs, p->cci_master, standby_level, settle_ms);
+	for (i = 0; i < n_extra_high; i++) {
+		rc = gpio_request_one(extra_high[i], GPIOF_OUT_INIT_HIGH,
+				      "camprobe_extra");
+		pr_info("extra gpio %d high: %s (%d)\n", extra_high[i],
+			rc ? "request failed" : "ok", rc);
+		if (rc)
+			extra_high[i] = -1;
+	}
+	if (n_extra_high)
+		msleep(20);
 	rc = msm_camera_power_up(&p->power_info, MSM_CAMERA_PLATFORM_DEVICE,
 				 &p->i2c_client);
 	if (rc < 0) {
 		pr_err("power up failed: %d\n", rc);
+		for (i = 0; i < n_extra_high; i++)
+			if (extra_high[i] >= 0)
+				gpio_free(extra_high[i]);
 		mutex_unlock(&p->lock);
 		return rc;
 	}
 
 	/* msm_camera_power_up() already ran MSM_CCI_INIT for the platform device. */
 
+	if (cci_master >= 0)
+		p->cci_client.cci_i2c_master = cci_master;
+	if (cci_master == 1) {
+		cfg21 = __raw_readl(TLMM_CFG(21));
+		cfg22 = __raw_readl(TLMM_CFG(22));
+		__raw_writel((1 << 2) | 3, TLMM_CFG(21));
+		__raw_writel((1 << 2) | 3, TLMM_CFG(22));
+		mb();
+		pr_info("cci master 1: gpio 21/22 function 1, pull-up\n");
+	}
+	if (settle_ms > 0)
+		msleep(settle_ms);
+
+	nokia_camprobe_dump_hw("after power up");
 	for (i = 0; i < p->num_addrs; i++) {
 		p->cci_client.sid = p->addrs[i];      /* 7-bit */
 		p->i2c_client.addr_type = MSM_CAMERA_I2C_WORD_ADDR;
-		nokia_camprobe_dump_ids(p, p->addrs[i]);
+		nokia_camprobe_dump_ids(p, p->addrs[i], false);
+	}
+	if (scan_all) {
+		int found = 0;
+
+		/*
+		 * One pointer byte (register 0x00) and a one-byte read: no data
+		 * byte ever reaches a device we do not know, whatever its
+		 * register width.
+		 */
+		pr_info("full scan 0x08-0x77 (8-bit pointer 0x00, read only):\n");
+		for (i = 0x08; i <= 0x77; i++) {
+			u16 v;
+
+			p->cci_client.sid = i;
+			p->i2c_client.addr_type = MSM_CAMERA_I2C_BYTE_ADDR;
+			if (nokia_camprobe_read(p, 0x00, &v,
+						MSM_CAMERA_I2C_BYTE_DATA) < 0)
+				continue;
+			pr_info("  0x%02x: ACK, [0x00] = 0x%02x\n", i, v & 0xff);
+			found++;
+		}
+		p->i2c_client.addr_type = MSM_CAMERA_I2C_WORD_ADDR;
+		pr_info("full scan done: %d address(es) answered\n", found);
 	}
 
+	if (cci_master == 1) {
+		__raw_writel(cfg21, TLMM_CFG(21));
+		__raw_writel(cfg22, TLMM_CFG(22));
+		mb();
+	}
+	p->cci_client.cci_i2c_master = p->cci_master;
+	if (hold_ms > 0) {
+		pr_info("holding power for %d ms\n", hold_ms);
+		msleep(hold_ms);
+	}
 	msm_camera_power_down(&p->power_info, MSM_CAMERA_PLATFORM_DEVICE,
 			      &p->i2c_client);
+	for (i = 0; i < n_extra_high; i++) {
+		if (extra_high[i] < 0)
+			continue;
+		gpio_set_value(extra_high[i], 0);
+		gpio_free(extra_high[i]);
+	}
 	pr_info("power down done\n");
 	mutex_unlock(&p->lock);
 	return 0;
@@ -298,6 +453,7 @@ static int nokia_camprobe_probe(struct platform_device *pdev)
 	p->pdev = pdev;
 	p->of_node = pdev->dev.of_node;
 	mutex_init(&p->lock);
+	INIT_DELAYED_WORK(&p->dump_work, nokia_camprobe_dump_work);
 	platform_set_drvdata(pdev, p);
 
 	rc = nokia_camprobe_parse_dt(p);

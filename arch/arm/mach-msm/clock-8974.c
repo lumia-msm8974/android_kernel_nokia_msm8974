@@ -11,6 +11,7 @@
  */
 
 #include <linux/kernel.h>
+#include <linux/of.h>
 #include <linux/init.h>
 #include <linux/err.h>
 #include <linux/ctype.h>
@@ -4921,6 +4922,24 @@ static struct clk_lookup msm_clocks_8974_only[] __initdata = {
 	CLK_LOOKUP("cam_clk", gcc_gp1_clk.c, "2.qcom,camera"),
 };
 
+/*
+ * The MSM8974 (non Pro) Lumias (930 "martini", 1520 "bandit") clock their
+ * camera modules from CAM_MCLK0/2 on GPIO 15/17, like the Pro parts and as
+ * the Windows PEP does (camss_mclkN_clk at 9.6 MHz), not from the GP clocks
+ * of the 8974 reference boards. Same entries as msm_clocks_8974_only, so
+ * the size of msm_clocks_8974 still fits.
+ */
+static struct clk_lookup msm_clocks_8974_lumia[] __initdata = {
+	CLK_LOOKUP("cam_src_clk", mclk1_clk_src.c, "90.qcom,camera"),
+	CLK_LOOKUP("cam_clk", camss_mclk1_clk.c, "90.qcom,camera"),
+	CLK_LOOKUP("cam_src_clk", mclk0_clk_src.c, "0.qcom,camera"),
+	CLK_LOOKUP("cam_src_clk", mclk1_clk_src.c, "1.qcom,camera"),
+	CLK_LOOKUP("cam_src_clk", mclk2_clk_src.c, "2.qcom,camera"),
+	CLK_LOOKUP("cam_clk", camss_mclk0_clk.c, "0.qcom,camera"),
+	CLK_LOOKUP("cam_clk", camss_mclk1_clk.c, "1.qcom,camera"),
+	CLK_LOOKUP("cam_clk", camss_mclk2_clk.c, "2.qcom,camera"),
+};
+
 static struct clk_lookup msm_clocks_8974_common[] __initdata = {
 	CLK_LOOKUP("xo",        cxo_otg_clk.c,                  "msm_otg"),
 	CLK_LOOKUP("xo",  cxo_pil_lpass_clk.c,      "fe200000.qcom,lpass"),
@@ -5901,7 +5920,15 @@ static void __init msm8974_clock_pre_init(void)
 		msm8974_pro_clock_override();
 
 	/* version specific lookup table changes */
-	if (cpu_is_msm8974()) {
+	if (cpu_is_msm8974() && (of_machine_is_compatible("nokia,martini") ||
+				 of_machine_is_compatible("nokia,bandit"))) {
+		BUILD_BUG_ON(ARRAY_SIZE(msm_clocks_8974_lumia) >
+			     ARRAY_SIZE(msm_clocks_8974_only));
+		memcpy(msm_clocks_8974 + ARRAY_SIZE(msm_clocks_8974_common),
+		       msm_clocks_8974_lumia, sizeof(msm_clocks_8974_lumia));
+		msm8974_clock_init_data.size +=
+			ARRAY_SIZE(msm_clocks_8974_lumia);
+	} else if (cpu_is_msm8974()) {
 		memcpy(msm_clocks_8974 + ARRAY_SIZE(msm_clocks_8974_common),
 		       msm_clocks_8974_only, sizeof(msm_clocks_8974_only));
 		msm8974_clock_init_data.size +=

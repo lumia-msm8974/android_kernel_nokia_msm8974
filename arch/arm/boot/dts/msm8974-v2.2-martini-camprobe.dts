@@ -45,3 +45,16 @@
 	regulator-max-microvolt = <2800000>;
 	qcom,init-voltage = <2800000>;
 };
+
+/*
+ * CCI master 1 is not used on the Lumias; leave GPIO 21/22 to the probe
+ * (extra_high) to find out whether they enable a camera rail.
+ */
+&cci {
+	gpios = <&msmgpio 19 0>,
+		<&msmgpio 20 0>;
+	qcom,gpio-tbl-num = <0 1>;
+	qcom,gpio-tbl-flags = <1 1>;
+	qcom,gpio-tbl-label = "CCI_I2C_DATA0",
+			      "CCI_I2C_CLK0";
+};
