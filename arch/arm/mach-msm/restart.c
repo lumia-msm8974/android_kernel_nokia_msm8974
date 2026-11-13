@@ -25,6 +25,9 @@
 #include <linux/mfd/pmic8901.h>
 #include <linux/mfd/pm8xxx/misc.h>
 #include <linux/qpnp/power-on.h>
+#include <linux/debugfs.h>
+#include <linux/seq_file.h>
+#include <linux/sizes.h>
 
 #include <asm/mach-types.h>
 #include <asm/cacheflush.h>
@@ -252,6 +255,99 @@ static irqreturn_t resout_irq_handler(int irq, void *dev_id)
 	return IRQ_HANDLED;
 }
 
+/*
+ * Lumia test: the Nokia UEFI shows the empty battery icon after every
+ * restart from Linux, never after a cold boot. Shared IMEM survives a
+ * PMIC reset but not a power-off, so keep a copy of what the bootloader
+ * left there, show what Linux changed (debugfs lumia_imem/diff) and,
+ * with restore_imem=1, put the copy back right before the reset.
+ * restore_imem_off >= 0 restores only the 32-bit word at that offset.
+ */
+#define LUMIA_IMEM_SIZE SZ_4K
+static u32 lumia_imem_boot[LUMIA_IMEM_SIZE / 4];
+static bool lumia_imem_saved;
+static int restore_imem;
+module_param(restore_imem, int, 0644);
+static int restore_imem_off = -1;
+module_param(restore_imem_off, int, 0644);
+
+static void lumia_imem_save(void)
+{
+	int i;
+
+	for (i = 0; i < LUMIA_IMEM_SIZE / 4; i++)
+		lumia_imem_boot[i] = __raw_readl(MSM_IMEM_BASE + 4 * i);
+	lumia_imem_saved = true;
+}
+
+static void lumia_imem_restore(void)
+{
+	int i, n = 0;
+
+	if (!lumia_imem_saved || !restore_imem)
+		return;
+	for (i = 0; i < LUMIA_IMEM_SIZE / 4; i++) {
+		u32 now = __raw_readl(MSM_IMEM_BASE + 4 * i);
+
+		if (now == lumia_imem_boot[i])
+			continue;
+		if (restore_imem_off >= 0 && restore_imem_off != 4 * i)
+			continue;
+		pr_notice("lumia_imem: 0x%03x %08x -> %08x\n", 4 * i, now,
+			  lumia_imem_boot[i]);
+		__raw_writel(lumia_imem_boot[i], MSM_IMEM_BASE + 4 * i);
+		n++;
+	}
+	mb();
+	pr_notice("lumia_imem: restored %d words\n", n);
+}
+
+static int lumia_imem_diff_show(struct seq_file *m, void *unused)
+{
+	int i;
+
+	seq_printf(m, "# saved=%d restore_imem=%d restore_imem_off=%d\n",
+		   lumia_imem_saved, restore_imem, restore_imem_off);
+	seq_puts(m, "# offset boot     now\n");
+	for (i = 0; i < LUMIA_IMEM_SIZE / 4; i++) {
+		u32 now = __raw_readl(MSM_IMEM_BASE + 4 * i);
+
+		if (now != lumia_imem_boot[i])
+			seq_printf(m, "0x%03x %08x %08x\n", 4 * i,
+				   lumia_imem_boot[i], now);
+	}
+	return 0;
+}
+
+static int lumia_imem_diff_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, lumia_imem_diff_show, NULL);
+}
+
+static const struct file_operations lumia_imem_diff_fops = {
+	.open = lumia_imem_diff_open,
+	.read = seq_read,
+	.llseek = seq_lseek,
+	.release = single_release,
+};
+
+static struct debugfs_blob_wrapper lumia_imem_blob = {
+	.data = lumia_imem_boot,
+	.size = sizeof(lumia_imem_boot),
+};
+
+static int __init lumia_imem_debugfs_init(void)
+{
+	struct dentry *d = debugfs_create_dir("lumia_imem", NULL);
+
+	if (IS_ERR_OR_NULL(d))
+		return 0;
+	debugfs_create_file("diff", 0400, d, NULL, &lumia_imem_diff_fops);
+	debugfs_create_blob("boot", 0400, d, &lumia_imem_blob);
+	return 0;
+}
+late_initcall(lumia_imem_debugfs_init);
+
 static void msm_restart_prepare(const char *cmd)
 {
 #ifdef CONFIG_MSM_DLOAD_MODE
@@ -317,6 +413,8 @@ static void msm_restart_prepare(const char *cmd)
 		}
 	}
 
+	lumia_imem_restore();
+
 	flush_cache_all();
 	outer_flush_all();
 }
@@ -377,6 +475,7 @@ late_initcall(msm_pmic_restart_init);
 
 static int __init msm_restart_init(void)
 {
+	lumia_imem_save();
 #ifdef CONFIG_MSM_DLOAD_MODE
 	atomic_notifier_chain_register(&panic_notifier_list, &panic_blk);
 	dload_mode_addr = MSM_IMEM_BASE + DLOAD_MODE_ADDR;
