@@ -17,6 +17,12 @@
  * driving them low could hold a module in reset. The rear module also needs
  * TLMM_SPARE_REG cleared (board-8974-gpiomux.c).
  *
+ * Rear focus and stabilisation (msm_actuator, msm_actuator_lumia.c): the
+ * VCM driver is reached through the sensor's serial master (8-bit 0x1c on
+ * that bus), the OIS controller is on CCI master 0 at 0x3e and gets its
+ * firmware from lumia-ois-<module id>.bin. Rear flash: driver IC on CCI
+ * master 0 at 0x30, powered by GPIO 83 with the sensor (msm_led_lumia.c).
+ *
  * Copyright (c) 2026, Lorenzo Giannoccaro. GPLv2 only.
  */
 
@@ -33,7 +39,26 @@
 	qcom,init-voltage = <2800000>;
 };
 
+&soc {
+	led_flash0: qcom,camera-led-flash@30 {
+		cell-index = <0>;
+		compatible = "nokia,lumia-camera-flash";
+		qcom,cci-master = <0>;
+		nokia,cci-sid = <0x30>;
+	};
+};
+
 &cci {
+	actuator0: qcom,actuator@3e {
+		cell-index = <0>;
+		reg = <0x3e>;
+		compatible = "qcom,actuator";
+		qcom,cci-master = <0>;
+		nokia,af-sensor-bridge = <0x1c>;
+		nokia,af-sensor-sid = <0x10>;
+		nokia,ois;
+	};
+
 	cam_rear: qcom,camera@0 {
 		cell-index = <0>;
 		compatible = "qcom,camera";
@@ -44,6 +69,8 @@
 		qcom,sensor-position = <0>;
 		qcom,sensor-mode = <0>;
 		qcom,cci-master = <0>;
+		qcom,actuator-src = <&actuator0>;
+		qcom,led-flash-src = <&led_flash0>;
 		cam_vana-supply = <&pm8941_l23>;
 		cam_vio-supply = <&pm8941_l12>;
 		qcom,cam-vreg-name = "cam_vana", "cam_vio";
