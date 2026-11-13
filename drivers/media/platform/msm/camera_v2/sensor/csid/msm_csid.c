@@ -380,6 +380,18 @@ static int msm_csid_release(struct csid_device *csid_dev)
 	}
 
 	irq = msm_camera_io_r(csid_dev->base + CSID_IRQ_STATUS_ADDR);
+	pr_info("lumia-csi: CSID%d release: irq 0x%08x pkts %u ecc %u crc %u short 0x%08x unmapped 0x%08x long 0x%08x misr %08x %08x %08x %08x\n",
+		csid_dev->pdev->id, irq,
+		msm_camera_io_r(csid_dev->base + CSID_STATS_TOTAL_PKTS_RCVD_ADDR),
+		msm_camera_io_r(csid_dev->base + CSID_STATS_ECC_ADDR),
+		msm_camera_io_r(csid_dev->base + CSID_STATS_CRC_ADDR),
+		msm_camera_io_r(csid_dev->base + CSID_CAPTURED_SHORT_PKT_ADDR),
+		msm_camera_io_r(csid_dev->base + CSID_CAPTURED_UNMAPPED_LONG_PKT_HDR_ADDR),
+		msm_camera_io_r(csid_dev->base + CSID_CAPTURED_LONG_PKT_HDR_ADDR),
+		msm_camera_io_r(csid_dev->base + CSID_PIF_MISR_DL0_ADDR),
+		msm_camera_io_r(csid_dev->base + CSID_PIF_MISR_DL1_ADDR),
+		msm_camera_io_r(csid_dev->base + CSID_PIF_MISR_DL2_ADDR),
+		msm_camera_io_r(csid_dev->base + CSID_PIF_MISR_DL3_ADDR));
 	msm_camera_io_w(irq, csid_dev->base + CSID_IRQ_CLEAR_CMD_ADDR);
 	msm_camera_io_w(0, csid_dev->base + CSID_IRQ_MASK_ADDR);
 
