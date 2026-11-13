@@ -1770,6 +1770,14 @@ void __init msm_8974_init_gpiomux(void)
 				ARRAY_SIZE(bandit_i2c5_configs));
 		msm_gpiomux_install(bandit_nfc_configs,
 				ARRAY_SIZE(bandit_nfc_configs));
+		/*
+		 * TLMM_SPARE_REG: the Windows camera platform driver owns it
+		 * (third memory resource of \_SB.CAMP, 0xFD512024) and writes
+		 * 0 in PrepareHardware. With the 0xf written above the rear
+		 * camera module (sensor and OIS) never answers on CCI; with 0
+		 * both modules do.
+		 */
+		msm_tlmm_misc_reg_write(TLMM_SPARE_REG, 0);
 		/* Camera MCLK and CCI pads: the same \_SB.CAMP on both boards. */
 		msm_gpiomux_install(lumia_camera_configs,
 				ARRAY_SIZE(lumia_camera_configs));

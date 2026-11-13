@@ -38,6 +38,7 @@
 #include <linux/moduleparam.h>
 #include <linux/workqueue.h>
 #include <mach/msm_iomap.h>
+#include <mach/gpiomux.h>
 #include <media/msm_cam_sensor.h>
 #include "msm_sensor.h"
 #include "cci/msm_cci.h"
@@ -290,6 +291,15 @@ static void nokia_camprobe_extra_gpios_high(void)
 		msleep(20);
 }
 
+/*
+ * spare: value for TLMM_SPARE_REG (0xFD512024) during the scan, -1 = leave.
+ * The Windows camera platform driver owns this register (third memory
+ * resource of \_SB.CAMP) and writes 0 to it in PrepareHardware; Linux
+ * writes 0xf in msm_8974_init_gpiomux().
+ */
+static int spare = -1;
+module_param(spare, int, 0644);
+
 static void nokia_camprobe_dump_work(struct work_struct *work)
 {
 	nokia_camprobe_dump_hw("transfer pending");
@@ -377,6 +387,7 @@ static int nokia_camprobe_dump_ids(struct nokia_camprobe *p, u16 sid,
 static int nokia_camprobe_run(struct nokia_camprobe *p)
 {
 	u32 cfg21 = 0, cfg22 = 0;
+	int spare_old;
 	struct msm_sensor_power_setting saved_seq[16];
 	int rc, i;
 
@@ -395,6 +406,13 @@ static int nokia_camprobe_run(struct nokia_camprobe *p)
 		no_rst_stby ? "not driven" : "driven");
 	if (!extra_after)
 		nokia_camprobe_extra_gpios_high();
+	spare_old = msm_tlmm_misc_reg_read(TLMM_SPARE_REG);
+	if (spare >= 0) {
+		msm_tlmm_misc_reg_write(TLMM_SPARE_REG, spare);
+		mb();
+	}
+	pr_info("TLMM_SPARE_REG was 0x%x, now 0x%x\n", spare_old,
+		msm_tlmm_misc_reg_read(TLMM_SPARE_REG));
 	nokia_camprobe_extra_vregs(true);
 	if (n_extra_vreg)
 		msleep(5);
@@ -403,6 +421,7 @@ static int nokia_camprobe_run(struct nokia_camprobe *p)
 				 &p->i2c_client);
 	if (rc < 0) {
 		pr_err("power up failed: %d\n", rc);
+		msm_tlmm_misc_reg_write(TLMM_SPARE_REG, spare_old);
 		nokia_camprobe_extra_vregs(false);
 		memcpy(p->power_info.power_setting, saved_seq,
 		       p->power_info.power_setting_size * sizeof(saved_seq[0]));
@@ -481,6 +500,7 @@ static int nokia_camprobe_run(struct nokia_camprobe *p)
 	memcpy(p->power_info.power_setting, saved_seq,
 	       p->power_info.power_setting_size * sizeof(saved_seq[0]));
 	nokia_camprobe_extra_vregs(false);
+	msm_tlmm_misc_reg_write(TLMM_SPARE_REG, spare_old);
 	pr_info("power down done\n");
 	mutex_unlock(&p->lock);
 	return 0;
