@@ -119,7 +119,7 @@ static int msm_csid_config(struct csid_device *csid_dev,
 		return -EINVAL;
 	}
 
-	CDBG("%s csid_params, lane_cnt = %d, lane_assign = %x, phy sel = %d\n",
+	pr_info("lumia-csi: %s csid_params, lane_cnt = %d, lane_assign = %x, phy sel = %d\n",
 		__func__,
 		csid_params->lane_cnt,
 		csid_params->lane_assign,
@@ -159,8 +159,8 @@ static irqreturn_t msm_csid_irq(int irq_num, void *data)
 		return IRQ_HANDLED;
 	}
 	irq = msm_camera_io_r(csid_dev->base + CSID_IRQ_STATUS_ADDR);
-	CDBG("%s CSID%d_IRQ_STATUS_ADDR = 0x%x\n",
-		 __func__, csid_dev->pdev->id, irq);
+	pr_info_ratelimited("lumia-csi: CSID%d irq status 0x%08x\n",
+		 csid_dev->pdev->id, irq);
 	if (irq & (0x1 << CSID_RST_DONE_IRQ_BITSHIFT))
 			complete(&csid_dev->reset_complete);
 	msm_camera_io_w(irq, csid_dev->base + CSID_IRQ_CLEAR_CMD_ADDR);

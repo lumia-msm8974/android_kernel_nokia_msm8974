@@ -62,7 +62,7 @@ static int msm_csiphy_lane_config(struct csiphy_device *csiphy_dev,
 		return rc;
 	}
 
-	CDBG("%s csiphy_params, mask = %x cnt = %d settle cnt = %x csid %d\n",
+	pr_info("lumia-csi: %s csiphy_params, mask = %x cnt = %d settle cnt = %x csid %d\n",
 		__func__,
 		csiphy_params->lane_mask,
 		csiphy_params->lane_cnt,
