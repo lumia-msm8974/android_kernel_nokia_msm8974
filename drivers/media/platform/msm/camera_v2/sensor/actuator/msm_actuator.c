@@ -88,6 +88,12 @@ static void msm_actuator_parse_i2c_params(struct msm_actuator_ctrl_t *a_ctrl,
 		return;
 	}
 
+	if (a_ctrl->lumia_bridge) {
+		msm_actuator_lumia_bridge_append(a_ctrl, next_lens_position,
+			delay);
+		return;
+	}
+
 	size = a_ctrl->reg_tbl_size;
 	write_arr = a_ctrl->reg_tbl;
 	i2c_tbl = a_ctrl->i2c_reg_tbl;
@@ -677,6 +683,7 @@ static int32_t msm_actuator_init(struct msm_actuator_ctrl_t *a_ctrl,
 
 	a_ctrl->i2c_data_type = set_info->actuator_params.i2c_data_type;
 	a_ctrl->i2c_client.addr_type = set_info->actuator_params.i2c_addr_type;
+	msm_actuator_lumia_fixup(a_ctrl);
 	if (set_info->actuator_params.reg_tbl_size <=
 		MAX_ACTUATOR_REG_TBL_SIZE) {
 		a_ctrl->reg_tbl_size = set_info->actuator_params.reg_tbl_size;
@@ -691,9 +698,11 @@ static int32_t msm_actuator_init(struct msm_actuator_ctrl_t *a_ctrl,
 		kfree(a_ctrl->i2c_reg_tbl);
 
 	a_ctrl->i2c_reg_tbl = NULL;
+	a_ctrl->i2c_tbl_size = (set_info->af_tuning_params.total_steps + 1) *
+		msm_actuator_lumia_tbl_mult(a_ctrl);
 	a_ctrl->i2c_reg_tbl =
 		kzalloc(sizeof(struct msm_camera_i2c_reg_array) *
-		(set_info->af_tuning_params.total_steps + 1), GFP_KERNEL);
+		a_ctrl->i2c_tbl_size, GFP_KERNEL);
 	if (!a_ctrl->i2c_reg_tbl) {
 		pr_err("kzalloc fail\n");
 		return -ENOMEM;
@@ -779,6 +788,8 @@ static int32_t msm_actuator_config(struct msm_actuator_ctrl_t *a_ctrl,
 		rc = msm_actuator_init(a_ctrl, &cdata->cfg.set_info);
 		if (rc < 0)
 			pr_err("init table failed %d\n", rc);
+		else
+			msm_actuator_lumia_ois_start(a_ctrl);
 		break;
 
 	case CFG_SET_DEFAULT_FOCUS:
@@ -847,9 +858,7 @@ static struct msm_camera_i2c_fn_t msm_sensor_cci_func_tbl = {
 	.i2c_read = msm_camera_cci_i2c_read,
 	.i2c_read_seq = msm_camera_cci_i2c_read_seq,
 	.i2c_write = msm_camera_cci_i2c_write,
-#ifdef CONFIG_MACH_OPPO
 	.i2c_write_seq = msm_camera_cci_i2c_write_seq,
-#endif
 	.i2c_write_table = msm_camera_cci_i2c_write_table,
 	.i2c_write_seq_table = msm_camera_cci_i2c_write_seq_table,
 	.i2c_write_table_w_microdelay =
@@ -893,6 +902,12 @@ static int msm_actuator_close(struct v4l2_subdev *sd,
 	int rc = 0;
 	struct msm_actuator_ctrl_t *a_ctrl =  v4l2_get_subdevdata(sd);
 	CDBG("Enter\n");
+	if (!a_ctrl) {
+		pr_err("failed\n");
+		return -EINVAL;
+	}
+	/* before CCI release and before the sensor powers down */
+	msm_actuator_lumia_ois_stop(a_ctrl);
 	mutex_lock(a_ctrl->actuator_mutex);
 	if (!a_ctrl) {
 		pr_err("failed\n");
@@ -1132,6 +1147,7 @@ static int32_t msm_actuator_platform_probe(struct platform_device *pdev)
 	cci_client = msm_actuator_t->i2c_client.cci_client;
 	cci_client->cci_subdev = msm_cci_get_subdev();
 	cci_client->cci_i2c_master = MASTER_MAX;
+	msm_actuator_lumia_parse_dt(msm_actuator_t, pdev->dev.of_node);
 	v4l2_subdev_init(&msm_actuator_t->msm_sd.sd,
 		msm_actuator_t->act_v4l2_subdev_ops);
 	v4l2_set_subdevdata(&msm_actuator_t->msm_sd.sd, msm_actuator_t);
