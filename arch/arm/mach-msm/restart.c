@@ -252,6 +252,16 @@ static irqreturn_t resout_irq_handler(int irq, void *dev_id)
 	return IRQ_HANDLED;
 }
 
+/*
+ * The Nokia UEFI shows its charging screen (an empty battery) when it
+ * starts with a charger plugged in and the PMIC power-on reason has no
+ * power key. A hard reset latches a new reason (hard reset, plus USB
+ * when the cable is in); a warm reset keeps the reason of the original
+ * power-key boot, so the phone restarts straight into the boot chain.
+ */
+static bool warm_reboot = true;
+module_param(warm_reboot, bool, 0644);
+
 static void msm_restart_prepare(const char *cmd)
 {
 #ifdef CONFIG_MSM_DLOAD_MODE
@@ -277,7 +287,7 @@ static void msm_restart_prepare(const char *cmd)
 #ifdef CONFIG_MACH_OPPO
 	qpnp_pon_system_pwr_off(PON_POWER_OFF_WARM_RESET);
 #else
-	if (get_dload_mode() || (cmd != NULL && cmd[0] != '\0'))
+	if (warm_reboot || get_dload_mode() || (cmd != NULL && cmd[0] != '\0'))
 		qpnp_pon_system_pwr_off(PON_POWER_OFF_WARM_RESET);
 	else
 		qpnp_pon_system_pwr_off(PON_POWER_OFF_HARD_RESET);
