@@ -25,6 +25,8 @@
 #include <linux/regulator/consumer.h>
 #include <linux/mutex.h>
 #include <linux/of.h>
+#include <linux/seq_file.h>
+#include <linux/ratelimit.h>
 #include <trace/events/power.h>
 #include <mach/tz-restricted.h>
 #include <mach/clk-provider.h>
@@ -33,12 +35,14 @@
 struct handoff_clk {
 	struct list_head list;
 	struct clk *clk;
+	bool released;		/* firmware boots: vote dropped at runtime */
 };
 static LIST_HEAD(handoff_list);
 
 struct handoff_vdd {
 	struct list_head list;
 	struct clk_vdd_class *vdd_class;
+	bool released;
 };
 static LIST_HEAD(handoff_vdd_list);
 
@@ -661,6 +665,7 @@ static void vdd_class_init(struct clk_vdd_class *vdd)
 	}
 
 	v->vdd_class = vdd;
+	v->released = false;
 	list_add_tail(&v->list, &handoff_vdd_list);
 }
 
@@ -725,6 +730,7 @@ static int __handoff_clk(struct clk *clk)
 		clk->count = 1;
 		clk->prepare_count = 1;
 		h->clk = clk;
+		h->released = false;
 		list_add_tail(&h->list, &handoff_list);
 
 		pr_debug("Handed off %s rate=%lu\n", clk->dbg_name, clk->rate);
@@ -874,6 +880,233 @@ static void __init release_display_handoff(void)
 	pr_info("%s: released %d display clocks\n", __func__, n);
 }
 
+/*
+ * Firmware boots keep every other handoff vote (see clock_late_init()).
+ * Most of them are harmless extra enables of clocks that their drivers own,
+ * but some pin the SoC at its top operating point for good:
+ *  - the RPM bus clocks are handed off at INT_MAX and their voters at
+ *    LONG_MAX; a voter without a consumer (bimc_acpu_a_clk) or whose
+ *    consumer never votes keeps BIMC/DDR, CNOC, SNOC, PNOC at maximum;
+ *  - qdss_clk has no consumer without CoreSight and stays at its top level;
+ *  - the GFX3D/OCMEM voters keep the RPM GPU and OCMEM clocks running while
+ *    the GPU slumbers;
+ *  - vdd_class_init() votes every voltage class (vdd_dig = CX, Krait cores,
+ *    L2, HFPLLs) at its top level until late init, so CX stays at the
+ *    super turbo corner and the Krait rails at their highest voltage.
+ * On normal boots clock_late_init() drops all of them. Here the groups
+ * below can be dropped and taken back at runtime (lumia-screenoff.c),
+ * so that each one can be tried live and undone at once.
+ */
+static bool handoff_runtime_ready;
+static bool handoff_keep_mmss;
+
+static bool name_in(const char *n, const char * const *list)
+{
+	for (; *list; list++)
+		if (!strcmp(n, *list))
+			return true;
+	return false;
+}
+
+static bool name_prefix(const char *n, const char * const *list)
+{
+	for (; *list; list++)
+		if (!strncmp(n, *list, strlen(*list)))
+			return true;
+	return false;
+}
+
+/*
+ * Never dropped: XO and its buffers (external chips may rely on them
+ * without a vote), the CPU clocks, and the clocks the TrustZone may use
+ * during SCM calls without a vote of its own (crypto engines, PRNG, boot
+ * ROM for PIL).
+ */
+static const char * const handoff_keep_prefix[] = {
+	"cxo", "div_clk", "div_a_clk", "diff_clk", "diff_a_clk",
+	"krait", "hfpll", "l2_", "kpss", "acpu",
+	"gcc_ce1", "gcc_ce2", "ce1_", "ce2_", "gcc_prng", "gcc_boot_rom",
+	"gcc_xo", NULL,
+};
+
+static const char * const handoff_bus_names[] = {
+	"pnoc_clk", "pnoc_a_clk", "snoc_clk", "snoc_a_clk",
+	"cnoc_clk", "cnoc_a_clk", "bimc_clk", "bimc_a_clk",
+	"mmssnoc_ahb_clk", "mmssnoc_ahb_a_clk",
+	"pnoc_msmbus_clk", "pnoc_msmbus_a_clk",
+	"snoc_msmbus_clk", "snoc_msmbus_a_clk",
+	"cnoc_msmbus_clk", "cnoc_msmbus_a_clk",
+	"bimc_msmbus_clk", "bimc_msmbus_a_clk", "bimc_acpu_a_clk",
+	"pnoc_keepalive_a_clk", "pnoc_sps_clk", NULL,
+};
+
+static const char * const handoff_qdss_names[] = {
+	"qdss_clk", "qdss_a_clk", NULL,
+};
+
+static const char * const handoff_gpu_prefix[] = {
+	"gfx3d", "oxili", "ocmem", NULL,
+};
+
+static const char * const handoff_mmss_prefix[] = {
+	"mmss_", "mdss_", "mdp_", "axi_clk_src", "mmpll", "venus0", "vcodec0",
+	"camss_", "csi", "vfe", "jpeg", "cpp_", "mclk", "cci_", "gfx2d",
+	"byte", "pclk", "esc", "vsync", "dsi", "hdmi", "edp", "extpclk", NULL,
+};
+
+static unsigned int handoff_clk_group(struct clk *c)
+{
+	const char *n = c->dbg_name;
+
+	if (!n || name_prefix(n, handoff_keep_prefix))
+		return HANDOFF_GRP_KEEP;
+	if (name_in(n, handoff_bus_names))
+		return HANDOFF_GRP_BUS;
+	if (name_in(n, handoff_qdss_names))
+		return HANDOFF_GRP_QDSS;
+	if (name_prefix(n, handoff_gpu_prefix))
+		return HANDOFF_GRP_GPU;
+	if (name_prefix(n, handoff_mmss_prefix))
+		/* simple-framebuffer: the UEFI pipe needs them, nobody votes */
+		return handoff_keep_mmss ? HANDOFF_GRP_KEEP : HANDOFF_GRP_MMSS;
+	return HANDOFF_GRP_REST;
+}
+
+static unsigned int handoff_vdd_group(struct clk_vdd_class *v)
+{
+	const char *n = v->class_name;
+
+	if (!n || v->num_levels <= 0)
+		return HANDOFF_GRP_KEEP;
+	if (!strcmp(n, "vdd_dig"))
+		return HANDOFF_GRP_VDD_DIG;
+	if (!strncmp(n, "vdd_krait", 9) || !strcmp(n, "vdd_l2") ||
+	    !strcmp(n, "vdd_hfpll"))
+		return HANDOFF_GRP_KRAIT;
+	return HANDOFF_GRP_REST;
+}
+
+static void __init handoff_runtime_init(void)
+{
+	struct device_node *np;
+
+	np = of_find_compatible_node(NULL, NULL, "simple-framebuffer");
+	handoff_keep_mmss = np && of_device_is_available(np);
+	of_node_put(np);
+	handoff_runtime_ready = true;
+}
+
+/**
+ * msm_clock_handoff_set() - drop or take back firmware handoff votes
+ * @release: HANDOFF_GRP_* mask of the groups whose votes are dropped; the
+ *           groups not in the mask get their votes back
+ *
+ * Only meaningful on firmware boots, where clock_late_init() keeps the
+ * handoff votes. Votes are taken back before others are dropped, voltage
+ * votes before clocks, and dropped in the opposite order. Returns -EAGAIN
+ * before late init, otherwise the first error (the state of each vote is
+ * kept exact either way).
+ */
+int msm_clock_handoff_set(unsigned int release)
+{
+	struct handoff_clk *h;
+	struct handoff_vdd *v;
+	int rc, ret = 0;
+
+	mutex_lock(&msm_clock_init_lock);
+	if (!handoff_runtime_ready) {
+		mutex_unlock(&msm_clock_init_lock);
+		return -EAGAIN;
+	}
+
+	list_for_each_entry(v, &handoff_vdd_list, list) {
+		if (!v->released || (release & handoff_vdd_group(v->vdd_class)))
+			continue;
+		rc = vote_vdd_level(v->vdd_class, v->vdd_class->num_levels - 1);
+		if (rc) {
+			pr_err("handoff: %s not voted back (%d)\n",
+				v->vdd_class->class_name, rc);
+			ret = ret ? : rc;
+			continue;
+		}
+		v->released = false;
+		pr_info("handoff: %s back at its top level\n",
+			v->vdd_class->class_name);
+	}
+
+	list_for_each_entry(h, &handoff_list, list) {
+		if (!h->released || (release & handoff_clk_group(h->clk)))
+			continue;
+		rc = clk_prepare_enable(h->clk);
+		if (rc) {
+			pr_err("handoff: %s not enabled back (%d)\n",
+				h->clk->dbg_name, rc);
+			ret = ret ? : rc;
+			continue;
+		}
+		h->released = false;
+		pr_debug("handoff: %s voted back\n", h->clk->dbg_name);
+	}
+
+	/* children were handed off after their parents: drop them first */
+	list_for_each_entry_reverse(h, &handoff_list, list) {
+		if (h->released || !(release & handoff_clk_group(h->clk)))
+			continue;
+		/* a driver that disabled more than it enabled took the vote */
+		if (!h->clk->count || !h->clk->prepare_count) {
+			pr_warn_ratelimited("handoff: %s has no enable left\n",
+					    h->clk->dbg_name);
+			continue;
+		}
+		clk_disable_unprepare(h->clk);
+		h->released = true;
+		pr_debug("handoff: %s released\n", h->clk->dbg_name);
+	}
+
+	list_for_each_entry_reverse(v, &handoff_vdd_list, list) {
+		if (v->released || !(release & handoff_vdd_group(v->vdd_class)))
+			continue;
+		rc = unvote_vdd_level(v->vdd_class,
+				      v->vdd_class->num_levels - 1);
+		if (rc) {
+			pr_err("handoff: %s not released (%d)\n",
+				v->vdd_class->class_name, rc);
+			ret = ret ? : rc;
+			continue;
+		}
+		v->released = true;
+		pr_info("handoff: %s released\n", v->vdd_class->class_name);
+	}
+
+	mutex_unlock(&msm_clock_init_lock);
+	return ret;
+}
+
+/*
+ * One line per kept handoff vote: group (00 = never dropped), state, name,
+ * software rate or current/top voltage level.
+ */
+void msm_clock_handoff_show(struct seq_file *m)
+{
+	struct handoff_clk *h;
+	struct handoff_vdd *v;
+
+	mutex_lock(&msm_clock_init_lock);
+	list_for_each_entry(v, &handoff_vdd_list, list)
+		seq_printf(m, "%02x %-8s vdd %-24s level %lu/%d\n",
+			handoff_vdd_group(v->vdd_class) & HANDOFF_GRP_ALL,
+			v->released ? "released" : "held",
+			v->vdd_class->class_name, v->vdd_class->cur_level,
+			v->vdd_class->num_levels - 1);
+	list_for_each_entry(h, &handoff_list, list)
+		seq_printf(m, "%02x %-8s clk %-24s rate %lu count %u\n",
+			handoff_clk_group(h->clk) & HANDOFF_GRP_ALL,
+			h->released ? "released" : "held",
+			h->clk->dbg_name ? : "?", h->clk->rate,
+			h->clk->count);
+	mutex_unlock(&msm_clock_init_lock);
+}
+
 static int __init clock_late_init(void)
 {
 	struct handoff_clk *h, *h_temp;
@@ -901,6 +1134,7 @@ static int __init clock_late_init(void)
 		pr_info("%s: keeping handed-off clocks on (firmware boot)\n",
 			__func__);
 		release_display_handoff();
+		handoff_runtime_init();
 		mutex_unlock(&msm_clock_init_lock);
 		return ret;
 	}

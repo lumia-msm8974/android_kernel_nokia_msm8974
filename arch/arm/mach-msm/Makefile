@@ -407,7 +407,7 @@ obj-$(CONFIG_DEBUG_FS) += msm_cpr-debug.o
 endif
 
 obj-$(CONFIG_MACH_OPPO) += oppo/
-obj-$(CONFIG_MACH_NOKIA_LUMIA8974) += tz-restricted.o bandit-splash.o
+obj-$(CONFIG_MACH_NOKIA_LUMIA8974) += tz-restricted.o bandit-splash.o lumia-screenoff.o
 obj-$(CONFIG_BANDIT_BOOT_MARKS) += bandit-marks.o
 obj-$(CONFIG_MSM_FIQ) += msm7k_fiq.o
 obj-$(CONFIG_MSM_FIQ) += msm7k_fiq_handler.o
