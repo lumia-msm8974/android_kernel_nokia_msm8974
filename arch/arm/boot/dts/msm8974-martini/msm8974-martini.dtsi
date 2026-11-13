@@ -127,9 +127,8 @@
 	 * BLSP1 QUP3: ambient light/proximity APDS-9930 at 0x39 (stock SSDT
 	 * \_SB.APS1, QPDS_APS, 400 kHz); its interrupt is TLMM 74 (edge,
 	 * active low, pull-up), polled by the driver for now. Stock PEP: L18
-	 * at 2.85 V and LVS3 (1.8 V), both left on by the firmware, which
-	 * nothing here turns off (no full regulator constraints on firmware
-	 * boots).
+	 * at 2.85 V and LVS3 (1.8 V): found off when Linux starts from lk1st,
+	 * so the sensor node asks for both.
 	 * Accelerometer, gyroscope and magnetometer: none on an application
 	 * processor bus. The only motion sensor device is \_SB.SEN1
 	 * (QCOM2495, SSDT), which depends on the ADSP and IPC0 and only gives
@@ -156,6 +155,14 @@
 		light-sensor@39 {
 			compatible = "avago,apds9930";
 			reg = <0x39>;
+			/*
+			 * The supplies of the stock PEP. The UEFI turns them off
+			 * before it starts BootShim: without these properties the
+			 * chip has no power and the first read times out (seen on
+			 * an RM-1045 with lk1st, 13/11/2026).
+			 */
+			vdd-supply = <&pm8941_l18>;
+			vio-supply = <&pm8941_lvs3>;
 			/*
 			 * Starting point only, to recheck against a lux meter.
 			 * The stock driver settings (AlsPrxAlphamon, the same
