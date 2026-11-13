@@ -888,5 +888,8 @@
 	};
 };
 
-/* Camera (Karma rear, Skype_HD front); nodes disabled unless a test DTB enables them. */
-/include/ "../msm8974-camera-sensor-lumia.dtsi"
+/*
+ * Camera nodes are included by the top level DTS: the real sensor nodes
+ * (msm8974-camera-sensor-lumia.dtsi) or, in the camprobe test DTB, the
+ * identification probe nodes in their place.
+ */

@@ -14,6 +14,7 @@
 
 /include/ "msm8974-v2.2.dtsi"
 /include/ "msm8974-martini/msm8974-martini.dtsi"
+/include/ "msm8974-camera-sensor-lumia-probe.dtsi"
 
 / {
 	model = "Nokia Lumia 930";
