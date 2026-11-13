@@ -217,21 +217,23 @@ static int lumia_flash_config(struct msm_camera_led_cfg_t *cfg)
 	mutex_lock(&lf.lock);
 	switch (cfg->cfgtype) {
 	case MSM_CAMERA_LED_INIT:
-		rc = lumia_flash_init();
+		/* Sent before the sensor powers up: the IC sits on the camera
+		 * I/O rail and does not answer yet. Identify it on first use. */
+		lf.id = 0;
 		break;
 	case MSM_CAMERA_LED_LOW:
-		rc = lumia_flash_cci(true);
+		rc = lf.id ? 0 : lumia_flash_init();
 		if (rc >= 0)
 			rc = lumia_flash_fire(1);
 		break;
 	case MSM_CAMERA_LED_HIGH:
-		rc = lumia_flash_cci(true);
+		rc = lf.id ? 0 : lumia_flash_init();
 		if (rc >= 0)
 			rc = lumia_flash_fire(0);
 		break;
 	case MSM_CAMERA_LED_OFF:
 	case MSM_CAMERA_LED_RELEASE:
-		if (lf.cci_on && (lf.state == MSM_CAMERA_LED_LOW ||
+		if (lf.cci_on && lf.id && (lf.state == MSM_CAMERA_LED_LOW ||
 		    lf.state == MSM_CAMERA_LED_HIGH ||
 		    cfg->cfgtype == MSM_CAMERA_LED_OFF))
 			rc = lumia_flash_off();
