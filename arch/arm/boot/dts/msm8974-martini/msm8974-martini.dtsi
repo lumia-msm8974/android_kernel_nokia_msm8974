@@ -830,8 +830,16 @@
 };
 
 /*
- * Vibration motor on the PM8941 (as on the 1520), behind an external
- * driver enabled by PM8941 GPIO 8 (VIBRA_AMP_EN, 17.1 Lumia 930 kernel).
+ * Vibration motor behind an external driver enabled by PM8941 GPIO 8
+ * (VIBRA_AMP_EN, 17.1 Lumia 930 kernel). Unlike the 1520 (NOKIA_VIBRA_PMIC,
+ * PMIC vibra driver), the stock 930 firmware drives the motor through the
+ * audio codec: \_SB.VIB1 is NOKIA_VIBRA with GPIO 8 as its only resource,
+ * served by hwnvibraaudiocodec ("Audio codec vibra driver") with waveform
+ * amplitudes in the registry. The 17.1 port fed the driver from the codec
+ * LINEOUT2/LINEOUT4 differential pair at one point. This node keeps the
+ * PMIC vibrator and drives GPIO 8 with it; if the motor does not move, the
+ * codec route ("vibra-lineout" in mixer_paths.xml) is the alternative, and
+ * GPIO 8 must then follow the codec stream instead of this driver.
  */
 &pm8941_lsid1 {
 	qcom,vibrator@c000 {
@@ -1026,10 +1034,18 @@
 
 /*
  * Audio: WCD9320 (Taiko) codec on SLIMbus, as on the 1520 and in the 17.1
- * Lumia 930 kernel (msm8974-taiko-mtp-snd-card). PM8941 GPIO 15 is the
- * codec MCLK (DIV_CLK1, special function 1), as both kernels set it.
- * TODO(martini): headset jack switch polarity, micbias capacitors and the
- * earpiece path from the stock audio configuration.
+ * Lumia 930 kernel (msm8974-taiko-mtp-snd-card).
+ *
+ * The stock RM-1045 firmware describes the audio hardware exactly as the
+ * 1520 one: the ADSP/codec/MBHC/QCRT ACPI tables are identical, the codec
+ * driver binary is the same and the calibration maps every ACDB device to
+ * the same codec path. Only the vibra differs (see the vibrator node).
+ *
+ * PM8941 GPIO 15 is the codec MCLK: the stock power state of the codec
+ * (\_SB.ADSP.SLM1.ADCM.AUDD, PEP component 0) configures it as a digital
+ * output, CMOS, VIN2, special function 1 (DIV_CLK1, 9.6 MHz), high drive
+ * strength, the value the 1520 runs with. Micbias stays capless, as on the
+ * 1520 where the digital mics work with it.
  */
 &pm8941_gpios {
 	gpio@ce00 { /* GPIO 15: codec MCLK (DIV_CLK1) */
@@ -1037,9 +1053,24 @@
 		qcom,output-type = <0>;		/* CMOS */
 		qcom,pull = <5>;		/* no pull */
 		qcom,vin-sel = <2>;		/* VIN2, 1.8 V */
-		qcom,out-strength = <1>;	/* low, as the 17.1 kernel */
+		qcom,out-strength = <3>;	/* high, as on Windows */
 		qcom,src-sel = <2>;		/* function 1: DIV_CLK1 */
 		qcom,master-en = <1>;
+	};
+};
+
+/*
+ * Headset jack: same MBHC as the 1520 (WCD9320 MBHC interrupt on TLMM 72,
+ * edge, active high, pull-down in the stock \_SB.ADSP.SLM1.ADCM.AUDD.MBHC,
+ * same codec driver and calibration). The 1520 jack switch is normally
+ * open: with the default (normally closed) polarity an empty jack reads as
+ * an inserted line out. The 930 runs the same stock configuration, so it
+ * gets the same polarity. Headset mic on AMIC2 with MIC BIAS2 (stock codec
+ * path ADC_2, micbias 2), as in msm8974.dtsi.
+ */
+&soc {
+	sound {
+		qcom,headset-jack-type-NO;
 	};
 };
 
