@@ -584,6 +584,8 @@ static int msm_ispif_config(struct ispif_device *ispif,
 			params->entries[i].csid, vfe_intf);
 		cid_mask = msm_ispif_get_cids_mask_from_cfg(
 				&params->entries[i]);
+		pr_info("lumia-ispif: intf %d vfe %d csid %d cid_mask 0x%x\n",
+			intftype, vfe_intf, params->entries[i].csid, cid_mask);
 		msm_ispif_enable_intf_cids(ispif, intftype,
 			cid_mask, vfe_intf, 1);
 		if (params->entries[i].crop_enable)
