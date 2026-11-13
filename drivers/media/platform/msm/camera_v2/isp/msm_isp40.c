@@ -571,6 +571,9 @@ static void msm_vfe40_read_irq_status(struct vfe_device *vfe_dev,
 	 */
 	if (*irq_status0 & 0x6000000)
 		*irq_status0 &= ~(0x18000000);
+	pr_info_ratelimited("lumia-isp: vfe%d irq status0 0x%08x status1 0x%08x camif 0x%08x\n",
+		vfe_dev->pdev->id, *irq_status0, *irq_status1,
+		msm_camera_io_r(vfe_dev->vfe_base + 0x31C));
 	msm_camera_io_w(*irq_status0, vfe_dev->vfe_base + 0x30);
 	msm_camera_io_w(*irq_status1, vfe_dev->vfe_base + 0x34);
 	msm_camera_io_w_mb(1, vfe_dev->vfe_base + 0x24);

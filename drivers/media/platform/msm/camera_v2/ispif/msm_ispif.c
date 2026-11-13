@@ -933,6 +933,9 @@ static inline void msm_ispif_read_irq_status(struct ispif_irq_status *out,
 
 		ispif_process_irq(ispif, out, VFE1);
 	}
+	pr_info_ratelimited("lumia-ispif: irq vfe0 0x%08x 0x%08x 0x%08x\n",
+		out[VFE0].ispifIrqStatus0, out[VFE0].ispifIrqStatus1,
+		out[VFE0].ispifIrqStatus2);
 }
 
 static irqreturn_t msm_io_ispif_irq(int irq_num, void *data)
