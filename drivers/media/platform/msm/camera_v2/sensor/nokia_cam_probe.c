@@ -34,6 +34,7 @@
 #include <linux/delay.h>
 #include <linux/io.h>
 #include <linux/gpio.h>
+#include <linux/regulator/consumer.h>
 #include <linux/moduleparam.h>
 #include <linux/workqueue.h>
 #include <mach/msm_iomap.h>
@@ -176,6 +177,98 @@ static void nokia_camprobe_set_rst_stby(struct nokia_camprobe *p, bool skip)
 	}
 }
 
+/*
+ * win_order: power up in the Windows PEP order, platform first (CAMP F0:
+ * cam_vio/L12 and the vdig GPIO 83 or 18), then cam_vana, then MCLK, then
+ * reset/standby. The order is applied once per trigger on a copy.
+ */
+static bool win_order;
+module_param(win_order, bool, 0644);
+
+static int nokia_camprobe_rank(struct nokia_camprobe *p,
+			       struct msm_sensor_power_setting *ps)
+{
+	struct camera_vreg_t *v = p->power_info.cam_vreg;
+
+	if (ps->seq_type == SENSOR_VREG && v &&
+	    !strcmp(v[ps->seq_val].reg_name, "cam_vio"))
+		return 0;
+	if (ps->seq_type == SENSOR_GPIO && ps->seq_val == SENSOR_GPIO_VDIG)
+		return 1;
+	if (ps->seq_type == SENSOR_VREG)
+		return 2;
+	if (ps->seq_type == SENSOR_CLK)
+		return 3;
+	return 4;
+}
+
+static void nokia_camprobe_reorder(struct nokia_camprobe *p,
+				   struct msm_sensor_power_setting *saved)
+{
+	struct msm_camera_power_ctrl_t *pw = &p->power_info;
+	int n = pw->power_setting_size, i, j, k = 0, r;
+
+	memcpy(saved, pw->power_setting, n * sizeof(*saved));
+	if (!win_order)
+		return;
+	for (r = 0; r <= 4; r++)
+		for (i = 0; i < n; i++)
+			if (nokia_camprobe_rank(p, &saved[i]) == r)
+				pw->power_setting[k++] = saved[i];
+	for (j = 0; j < n; j++)
+		pr_info("  seq[%d] type %d val %d cfg %ld delay %u\n", j,
+			pw->power_setting[j].seq_type,
+			pw->power_setting[j].seq_val,
+			pw->power_setting[j].config_val,
+			pw->power_setting[j].delay);
+}
+
+/*
+ * extra_vreg: regulators (by name, e.g. 8941_l3) to enable at their DT
+ * voltage before the power sequence and disable after power down. The
+ * Windows sleep config (\_SB.SDFR F3) turns L3 and L10 off, so they are on
+ * while Windows runs although no device votes them; Linux drops them as
+ * unused.
+ */
+static char *extra_vreg[6];
+static int n_extra_vreg;
+module_param_array(extra_vreg, charp, &n_extra_vreg, 0644);
+static struct regulator *extra_reg[6];
+/* extra_uv: optional voltage (uV) for each extra_vreg entry, 0 = as is */
+static int extra_uv[6];
+static int n_extra_uv;
+module_param_array(extra_uv, int, &n_extra_uv, 0644);
+
+static void nokia_camprobe_extra_vregs(bool on)
+{
+	int i;
+
+	for (i = 0; i < n_extra_vreg; i++) {
+		if (on) {
+			extra_reg[i] = regulator_get(NULL, extra_vreg[i]);
+			if (IS_ERR(extra_reg[i])) {
+				pr_info("extra vreg %s: get failed %ld\n",
+					extra_vreg[i], PTR_ERR(extra_reg[i]));
+				extra_reg[i] = NULL;
+				continue;
+			}
+			if (i < n_extra_uv && extra_uv[i] > 0)
+				pr_info("extra vreg %s set %d uV: %d\n",
+					extra_vreg[i], extra_uv[i],
+					regulator_set_voltage(extra_reg[i],
+							      extra_uv[i],
+							      extra_uv[i]));
+			pr_info("extra vreg %s on: %d (%d uV)\n", extra_vreg[i],
+				regulator_enable(extra_reg[i]),
+				regulator_get_voltage(extra_reg[i]));
+		} else if (extra_reg[i]) {
+			regulator_disable(extra_reg[i]);
+			regulator_put(extra_reg[i]);
+			extra_reg[i] = NULL;
+		}
+	}
+}
+
 static void nokia_camprobe_dump_work(struct work_struct *work)
 {
 	nokia_camprobe_dump_hw("transfer pending");
@@ -263,6 +356,7 @@ static int nokia_camprobe_dump_ids(struct nokia_camprobe *p, u16 sid,
 static int nokia_camprobe_run(struct nokia_camprobe *p)
 {
 	u32 cfg21 = 0, cfg22 = 0;
+	struct msm_sensor_power_setting saved_seq[16];
 	int rc, i;
 
 	mutex_lock(&p->lock);
@@ -288,10 +382,17 @@ static int nokia_camprobe_run(struct nokia_camprobe *p)
 	}
 	if (n_extra_high)
 		msleep(20);
+	nokia_camprobe_extra_vregs(true);
+	if (n_extra_vreg)
+		msleep(5);
+	nokia_camprobe_reorder(p, saved_seq);
 	rc = msm_camera_power_up(&p->power_info, MSM_CAMERA_PLATFORM_DEVICE,
 				 &p->i2c_client);
 	if (rc < 0) {
 		pr_err("power up failed: %d\n", rc);
+		nokia_camprobe_extra_vregs(false);
+		memcpy(p->power_info.power_setting, saved_seq,
+		       p->power_info.power_setting_size * sizeof(saved_seq[0]));
 		for (i = 0; i < n_extra_high; i++)
 			if (extra_high[i] >= 0)
 				gpio_free(extra_high[i]);
@@ -362,6 +463,9 @@ static int nokia_camprobe_run(struct nokia_camprobe *p)
 		gpio_set_value(extra_high[i], 0);
 		gpio_free(extra_high[i]);
 	}
+	memcpy(p->power_info.power_setting, saved_seq,
+	       p->power_info.power_setting_size * sizeof(saved_seq[0]));
+	nokia_camprobe_extra_vregs(false);
 	pr_info("power down done\n");
 	mutex_unlock(&p->lock);
 	return 0;
