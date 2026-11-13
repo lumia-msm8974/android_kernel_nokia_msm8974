@@ -1016,6 +1016,57 @@ static struct msm_gpiomux_config sd_card_det __initdata = {
 	},
 };
 
+/*
+ * Lumia camera pads. The UEFI leaves them as plain GPIOs and Windows muxes
+ * them at run time through PEP (ACPI CAMP/CAMS/CAMF): MCLK0 on GPIO 15 and
+ * MCLK2 on GPIO 17 in function 1 (drive code 2), CCI master 0 on GPIO 19/20
+ * in function 1 with the internal pull-up (no external pull-ups on these
+ * boards). GPIO 21/22 (CCI master 1 on the MTP) are left alone: their role
+ * on the Lumias is unknown.
+ */
+static struct gpiomux_setting lumia_cam_mclk_active = {
+	.func = GPIOMUX_FUNC_1,
+	.drv = GPIOMUX_DRV_6MA,
+	.pull = GPIOMUX_PULL_NONE,
+};
+
+static struct gpiomux_setting lumia_cci_active = {
+	.func = GPIOMUX_FUNC_1,
+	.drv = GPIOMUX_DRV_2MA,
+	.pull = GPIOMUX_PULL_UP,
+};
+
+static struct msm_gpiomux_config lumia_camera_configs[] __initdata = {
+	{
+		.gpio = 15, /* CAM_MCLK0, rear module */
+		.settings = {
+			[GPIOMUX_ACTIVE]    = &lumia_cam_mclk_active,
+			[GPIOMUX_SUSPENDED] = &cam_settings[4],
+		},
+	},
+	{
+		.gpio = 17, /* CAM_MCLK2, front module */
+		.settings = {
+			[GPIOMUX_ACTIVE]    = &lumia_cam_mclk_active,
+			[GPIOMUX_SUSPENDED] = &cam_settings[4],
+		},
+	},
+	{
+		.gpio = 19, /* CCI_I2C_SDA0 */
+		.settings = {
+			[GPIOMUX_ACTIVE]    = &lumia_cci_active,
+			[GPIOMUX_SUSPENDED] = &gpio_suspend_config[0],
+		},
+	},
+	{
+		.gpio = 20, /* CCI_I2C_SCL0 */
+		.settings = {
+			[GPIOMUX_ACTIVE]    = &lumia_cci_active,
+			[GPIOMUX_SUSPENDED] = &gpio_suspend_config[0],
+		},
+	},
+};
+
 static struct msm_gpiomux_config msm_sensor_configs[] __initdata = {
 	{
 		.gpio = 15, /* CAM_MCLK0 */
@@ -1719,6 +1770,9 @@ void __init msm_8974_init_gpiomux(void)
 				ARRAY_SIZE(bandit_i2c5_configs));
 		msm_gpiomux_install(bandit_nfc_configs,
 				ARRAY_SIZE(bandit_nfc_configs));
+		/* Camera MCLK and CCI pads: the same \_SB.CAMP on both boards. */
+		msm_gpiomux_install(lumia_camera_configs,
+				ARRAY_SIZE(lumia_camera_configs));
 		pr_info("%s: keeping firmware pin configuration\n", __func__);
 		return;
 	}
