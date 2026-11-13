@@ -767,7 +767,7 @@ int msm_sensor_config(struct msm_sensor_ctrl_t *s_ctrl, void __user *argp)
 		if (s_ctrl->sensordata && s_ctrl->sensordata->sensor_name &&
 		    !strcmp(s_ctrl->sensordata->sensor_name, "skyphd")) {
 			int k, stream = 0;
-			char line[160];
+			char line[320];
 			int n = 0;
 
 			pr_info("lumia-sens: skyphd table size %u addr %d data %d delay %u rc %d\n",
@@ -784,13 +784,16 @@ int msm_sensor_config(struct msm_sensor_ctrl_t *s_ctrl, void __user *argp)
 				}
 			}
 			if (stream) {
-				static const u16 rb[] = { 0x0005, 0x0112, 0x0114,
+				static const u16 rb[] = { 0x0005, 0x0040, 0x0041,
+					0x0042, 0x0043, 0x0044, 0x0045, 0x0046,
+					0x0047, 0x0112, 0x0114, 0x0382, 0x0383,
+					0x0386, 0x0387, 0x0900, 0x0901, 0x0400,
 					0x0340, 0x0341, 0x0342, 0x0343, 0x0344, 0x0345,
 					0x0346, 0x0347, 0x034c, 0x034d, 0x034e, 0x034f,
 					0x0808, 0x0820, 0x0821 };
 				uint16_t v;
 
-				msleep(100);
+				msleep(300);
 				n = 0;
 				for (k = 0; k < ARRAY_SIZE(rb); k++) {
 					v = 0xffff;
