@@ -106,6 +106,9 @@ static void msm_csid_reset(struct csid_device *csid_dev)
 	return;
 }
 
+static uint lumia_csid_ctrl1;
+module_param(lumia_csid_ctrl1, uint, 0644);
+
 static int msm_csid_config(struct csid_device *csid_dev,
 	struct msm_camera_csid_params *csid_params)
 {
@@ -135,8 +138,10 @@ static int msm_csid_config(struct csid_device *csid_dev,
 	} else {
 		msm_camera_io_w(val, csidbase + CSID_CORE_CTRL_0_ADDR);
 		val = csid_params->phy_sel << CSID_PHY_SEL_SHIFT;
-		val |= 0xF;
+		val |= 0xF | lumia_csid_ctrl1;
 		msm_camera_io_w(val, csidbase + CSID_CORE_CTRL_1_ADDR);
+		pr_info("lumia-csi: CSID%d CORE_CTRL_1 0x%08x\n", csid_dev->pdev->id,
+			msm_camera_io_r(csidbase + CSID_CORE_CTRL_1_ADDR));
 	}
 
 	rc = msm_csid_cid_lut(&csid_params->lut_params, csidbase);
