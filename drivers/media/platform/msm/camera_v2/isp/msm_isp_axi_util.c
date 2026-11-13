@@ -625,6 +625,21 @@ int msm_isp_request_axi_stream(struct vfe_device *vfe_dev, void *arg)
 	}
 
 	msm_isp_calculate_framedrop(&vfe_dev->axi_data, stream_cfg_cmd);
+	/* Lumia camera bring-up trace */
+	pr_info("lumia-isp: vfe%d req idx %u wm %d/%d comp_mask_index %d\n",
+		vfe_dev->pdev->id,
+		HANDLE_TO_IDX(stream_cfg_cmd->axi_stream_handle),
+		stream_info->wm[0],
+		stream_info->num_planes > 1 ? stream_info->wm[1] : -1,
+		stream_info->comp_mask_index);
+	pr_info("lumia-isp: vfe%d req idx %u session %u stream %u src %d fmt 0x%x planes %u bufq 0x%x skip %d init_drop %u\n",
+		vfe_dev->pdev->id,
+		HANDLE_TO_IDX(stream_cfg_cmd->axi_stream_handle),
+		stream_cfg_cmd->session_id, stream_cfg_cmd->stream_id,
+		stream_info->stream_src, stream_info->output_format,
+		stream_info->num_planes, stream_info->bufq_handle,
+		stream_cfg_cmd->frame_skip_pattern,
+		stream_cfg_cmd->init_frame_drop);
 
 	if (stream_cfg_cmd->vt_enable && !vfe_dev->vt_enable) {
 		vfe_dev->vt_enable = stream_cfg_cmd->vt_enable;
@@ -880,6 +895,9 @@ static int msm_isp_cfg_ping_pong_address(struct vfe_device *vfe_dev,
 	rc = vfe_dev->buf_mgr->ops->get_buf(vfe_dev->buf_mgr,
 			vfe_dev->pdev->id, bufq_handle, &buf);
 	if (rc < 0) {
+		printk_ratelimited(KERN_INFO "lumia-isp: vfe%d idx %u bufq 0x%x src %d: no free buffer (%d)\n",
+			vfe_dev->pdev->id, stream_idx, bufq_handle,
+			stream_info->stream_src, rc);
 		if(stream_idx < MAX_NUM_STREAM)
 			vfe_dev->error_info.
 				stream_framedrop_count[stream_idx]++;
@@ -926,6 +944,15 @@ static void msm_isp_process_done_buf(struct vfe_device *vfe_dev,
 
 	if (src_intf < VFE_SRC_MAX) {
 		frame_id = vfe_dev->axi_data.src_info[src_intf].frame_id;
+	}
+	{
+		static u32 lumia_done[MAX_NUM_STREAM];
+
+		if ((lumia_done[stream_idx]++ % 30) == 0)
+			pr_info("lumia-isp: vfe%d idx %u src %d frame %u buf done #%u\n",
+				vfe_dev->pdev->id, stream_idx,
+				stream_info->stream_src, frame_id,
+				lumia_done[stream_idx]);
 	}
 
 	if (buf && ts) {
@@ -1574,6 +1601,14 @@ void msm_isp_process_axi_irq(struct vfe_device *vfe_dev,
 		get_wm_mask(irq_status0, irq_status1);
 	if (!(comp_mask || wm_mask))
 		return;
+	{
+		static u32 lumia_axi_irqs;
+
+		if ((lumia_axi_irqs++ % 20) == 0)
+			pr_info("lumia-isp: vfe%d axi irq #%u status0 0x%08x status1 0x%08x comp 0x%x wm 0x%x\n",
+				vfe_dev->pdev->id, lumia_axi_irqs, irq_status0,
+				irq_status1, comp_mask, wm_mask);
+	}
 
 	ISP_DBG("%s: status: 0x%x\n", __func__, irq_status0);
 	pingpong_status =

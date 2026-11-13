@@ -335,6 +335,17 @@ int msm_isp_cfg_pix(struct vfe_device *vfe_dev,
 
 	vfe_dev->axi_data.src_info[VFE_PIX_0].input_format =
 		input_cfg->d.pix_cfg.input_format;
+	{
+		struct msm_vfe_camif_cfg *c = &input_cfg->d.pix_cfg.camif_cfg;
+
+		pr_info("lumia-isp: vfe%d pix cfg: fmt 0x%x pattern %d mux %d clk %u lines %u ppl %u pix %u-%u lines %u-%u epoch %u/%u camif_input %d\n",
+			vfe_dev->pdev->id, input_cfg->d.pix_cfg.input_format,
+			input_cfg->d.pix_cfg.pixel_pattern,
+			input_cfg->d.pix_cfg.input_mux, input_cfg->input_pix_clk,
+			c->lines_per_frame, c->pixels_per_line, c->first_pixel,
+			c->last_pixel, c->first_line, c->last_line,
+			c->epoch_line0, c->epoch_line1, c->camif_input);
+	}
 
 	vfe_dev->hw_info->vfe_ops.core_ops.cfg_camif(
 		vfe_dev, &input_cfg->d.pix_cfg);
