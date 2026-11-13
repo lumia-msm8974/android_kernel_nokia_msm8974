@@ -40,6 +40,9 @@
 
 /* Candidate 7-bit CCI addresses, overridable via qcom,probe-addr in the DT. */
 static const u16 default_addrs[] = { 0x10, 0x1a, 0x20, 0x36, 0x37, 0x6c, 0x6d };
+
+/* One debugfs directory for all probe nodes, one trigger file per node. */
+static struct dentry *nokia_camprobe_root;
 #define MAX_ADDRS 16
 
 /* Local copy: the camera_v2 clk table is static to msm_sensor.c. */
@@ -159,10 +162,7 @@ static int nokia_camprobe_run(struct nokia_camprobe *p)
 		return rc;
 	}
 
-	/* The CCI itself is brought up through the i2c_util INIT command. */
-	rc = p->i2c_client.i2c_func_tbl->i2c_util(&p->i2c_client, MSM_CCI_INIT);
-	if (rc < 0)
-		pr_err("CCI init failed: %d (addresses may still answer)\n", rc);
+	/* msm_camera_power_up() already ran MSM_CCI_INIT for the platform device. */
 
 	for (i = 0; i < p->num_addrs; i++) {
 		p->cci_client.sid = p->addrs[i];      /* 7-bit */
@@ -170,7 +170,6 @@ static int nokia_camprobe_run(struct nokia_camprobe *p)
 		nokia_camprobe_dump_ids(p, p->addrs[i]);
 	}
 
-	p->i2c_client.i2c_func_tbl->i2c_util(&p->i2c_client, MSM_CCI_RELEASE);
 	msm_camera_power_down(&p->power_info, MSM_CAMERA_PLATFORM_DEVICE,
 			      &p->i2c_client);
 	pr_info("power down done\n");
@@ -290,6 +289,7 @@ free_vreg:
 static int nokia_camprobe_probe(struct platform_device *pdev)
 {
 	struct nokia_camprobe *p;
+	const char *name;
 	int rc;
 
 	p = devm_kzalloc(&pdev->dev, sizeof(*p), GFP_KERNEL);
@@ -314,13 +314,16 @@ static int nokia_camprobe_probe(struct platform_device *pdev)
 	p->i2c_client.i2c_func_tbl = &nokia_camprobe_cci_tbl;
 	p->i2c_client.addr_type = MSM_CAMERA_I2C_WORD_ADDR;
 
-	p->dir = debugfs_create_dir("nokia_camprobe", NULL);
-	if (!IS_ERR_OR_NULL(p->dir))
-		debugfs_create_file("scan", 0200, p->dir, p,
-				    &nokia_camprobe_fops);
+	if (of_property_read_string(p->of_node, "qcom,sensor-name", &name))
+		name = dev_name(&pdev->dev);
+	if (IS_ERR_OR_NULL(nokia_camprobe_root))
+		nokia_camprobe_root = debugfs_create_dir("nokia_camprobe", NULL);
+	if (!IS_ERR_OR_NULL(nokia_camprobe_root))
+		p->dir = debugfs_create_file(name, 0200, nokia_camprobe_root,
+					     p, &nokia_camprobe_fops);
 
 	dev_info(&pdev->dev,
-		 "ready: echo 1 > /sys/kernel/debug/nokia_camprobe/scan\n");
+		 "ready: echo 1 > /sys/kernel/debug/nokia_camprobe/%s\n", name);
 	return 0;
 }
 
