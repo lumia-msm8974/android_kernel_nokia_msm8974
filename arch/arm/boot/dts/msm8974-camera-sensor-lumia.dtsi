@@ -1,0 +1,119 @@
+/*
+ * Shared camera sensor description for the MSM8974 Lumias (Nokia Lumia 930
+ * "martini" and Lumia 1520 "bandit"): they carry the same camera hardware
+ * (identical DSDT camera devices and PEP sequences, see CAMERA-MARTINI-PIANO.md
+ * §6), so one description serves both boards.
+ *
+ * Rear "Karma" 20 MP SMIA++ module (Mitsumi, OIS/AF ROHM BU24210) on CCI
+ * master 0, CSIPHY0/CSID0, MCLK0 (GPIO 15) at 9.6 MHz. Front "Skype_HD"
+ * 1.2 MP module on CCI master 0, CSIPHY2/CSID2, MCLK2 (GPIO 17) at 9.6 MHz.
+ *
+ * Power rails from the Windows PEP (ACPI CAMS/CAMF/CAMP):
+ *   rear  : L23 2.8 V (analog), L12 1.8 V (common MIPI CSI vdd), GPIO 83 high;
+ *   front : L17 2.8 V (analog), LVS2 1.8 V, GPIO 18 high before LVS2,
+ *           L12 1.8 V (common MIPI CSI vdd).
+ * No dedicated rear VDIG/VIO appears in the PEP; S3 1.8 V is always on. The
+ * reset/standby GPIOs (rear 90/89, front 92/91) are candidates to confirm on
+ * the phone with the probe below.
+ *
+ * Everything here is status = "disabled": the normal ROM boots with the camera
+ * off. A separate test DTB (msm8974-v2.2-{martini,bandit}-camprobe.dts) enables
+ * the probe nodes. Copyright (c) 2026, Lorenzo Giannoccaro, GPLv2.
+ */
+
+&cci {
+	/* Rear Karma module identification probe (CSIPHY0, MCLK0 GPIO 15). */
+	cam_probe_rear: nokia,camera-probe@0 {
+		cell-index = <0>;
+		compatible = "nokia,camera-probe";
+		reg = <0x0>;
+		qcom,cci-master = <0>;
+		qcom,sensor-name = "karma_probe";
+		/* Candidate 7-bit CCI slaves to scan (SMIA default 0x10 first). */
+		qcom,probe-addr = <0x10 0x1a 0x20 0x36 0x37 0x6c 0x6d>;
+		qcom,mclk-rate = <9600000>;
+		cam_vana-supply = <&pm8941_l23>;
+		cam_vio-supply = <&pm8941_l12>;
+		qcom,cam-vreg-name = "cam_vana", "cam_vio";
+		qcom,cam-vreg-type = <0 0>;
+		qcom,cam-vreg-min-voltage = <2800000 1800000>;
+		qcom,cam-vreg-max-voltage = <2800000 1800000>;
+		qcom,cam-vreg-op-mode = <80000 0>;
+		qcom,cam-power-seq-type = "sensor_vreg", "sensor_vreg",
+			"sensor_gpio_reset", "sensor_cam_mclk";
+		qcom,cam-power-seq-val = "cam_vana", "cam_vio",
+			"sensor_gpio_reset", "sensor_cam_mclk";
+		qcom,cam-power-seq-cfg-val = <1 1 1 9600000>;
+		qcom,cam-power-seq-delay = <2 1 2 5>;
+		qcom,gpio-no-mux = <0>;
+		gpios = <&msmgpio 15 0>,	/* MCLK0 */
+			<&msmgpio 90 0>,	/* reset candidate (XSHUTDOWN) */
+			<&msmgpio 89 0>,	/* standby/enable candidate */
+			<&msmgpio 83 0>;	/* platform enable, PEP holds high */
+		qcom,gpio-reset = <1>;
+		qcom,gpio-standby = <2>;
+		qcom,gpio-req-tbl-num = <0 1 2 3>;
+		qcom,gpio-req-tbl-flags = <1 0 0 0>;
+		qcom,gpio-req-tbl-label = "CAMIF_MCLK0",
+					  "CAM_RESET0",
+					  "CAM_STANDBY0",
+					  "CAM_PLATFORM_EN";
+		qcom,gpio-set-tbl-num = <3>;
+		qcom,gpio-set-tbl-flags = <2>;	/* drive GPIO 83 high */
+		qcom,gpio-set-tbl-delay = <1000>;
+		qcom,csi-lane-assign = <0x4320>;
+		qcom,csi-lane-mask = <0x1f>;
+		qcom,csiphy-sd-index = <0>;
+		qcom,csid-sd-index = <0>;
+		qcom,sensor-position = <0>;
+		qcom,sensor-mode = <0>;
+		status = "disabled";
+	};
+
+	/* Front Skype_HD module identification probe (CSIPHY2, MCLK2 GPIO 17). */
+	cam_probe_front: nokia,camera-probe@2 {
+		cell-index = <2>;
+		compatible = "nokia,camera-probe";
+		reg = <0x2>;
+		qcom,cci-master = <0>;
+		qcom,sensor-name = "skypehd_probe";
+		qcom,probe-addr = <0x10 0x1a 0x20 0x36 0x37 0x6c 0x6d>;
+		qcom,mclk-rate = <9600000>;
+		cam_vana-supply = <&pm8941_l17>;
+		cam_vio-supply = <&pm8941_lvs2>;
+		qcom,cam-vreg-name = "cam_vana", "cam_vio";
+		qcom,cam-vreg-type = <0 1>;	/* LVS2 is a switch */
+		qcom,cam-vreg-min-voltage = <2800000 0>;
+		qcom,cam-vreg-max-voltage = <2800000 0>;
+		qcom,cam-vreg-op-mode = <80000 0>;
+		qcom,cam-power-seq-type = "sensor_vreg", "sensor_vreg",
+			"sensor_gpio_reset", "sensor_cam_mclk";
+		qcom,cam-power-seq-val = "cam_vana", "cam_vio",
+			"sensor_gpio_reset", "sensor_cam_mclk";
+		qcom,cam-power-seq-cfg-val = <1 1 1 9600000>;
+		qcom,cam-power-seq-delay = <1 1 2 3>;
+		qcom,gpio-no-mux = <0>;
+		gpios = <&msmgpio 17 0>,	/* MCLK2 */
+			<&msmgpio 92 0>,	/* reset candidate */
+			<&msmgpio 91 0>,	/* standby candidate */
+			<&msmgpio 18 0>;	/* front enable, PEP holds high */
+		qcom,gpio-reset = <1>;
+		qcom,gpio-standby = <2>;
+		qcom,gpio-req-tbl-num = <0 1 2 3>;
+		qcom,gpio-req-tbl-flags = <1 0 0 0>;
+		qcom,gpio-req-tbl-label = "CAMIF_MCLK2",
+					  "CAM_RESET2",
+					  "CAM_STANDBY2",
+					  "CAM_FRONT_EN";
+		qcom,gpio-set-tbl-num = <3>;
+		qcom,gpio-set-tbl-flags = <2>;	/* drive GPIO 18 high */
+		qcom,gpio-set-tbl-delay = <1000>;
+		qcom,csi-lane-assign = <0x4320>;
+		qcom,csi-lane-mask = <0x7>;
+		qcom,csiphy-sd-index = <2>;
+		qcom,csid-sd-index = <2>;
+		qcom,sensor-position = <1>;
+		qcom,sensor-mode = <0>;
+		status = "disabled";
+	};
+};

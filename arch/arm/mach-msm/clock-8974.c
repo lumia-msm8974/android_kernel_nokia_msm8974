@@ -2977,8 +2977,21 @@ static struct rcg_clk jpeg2_clk_src = {
 	},
 };
 
+/*
+ * The stock non-Pro table only offers 19.2 MHz (cxo) and 66.67 MHz (gpll0/9)
+ * through set_rate_hid. The Lumia martini/bandit camera modules (Karma rear,
+ * Skype_HD front) are clocked at 9.6 MHz by the Windows PEP, and 24 MHz is a
+ * candidate for the DCC "max frame rate" modes. 9.6 MHz is an exact cxo/2 and
+ * would already work with set_rate_hid, but 24 MHz is gpll0*1/5 and needs the
+ * MND path. Both rates, and the MND ops below, are the same ones the MSM8974
+ * Pro parts use in msm8974_pro_clock_override(); this kernel only ever runs on
+ * non-Pro 8974AA (martini/bandit), so enabling that proven MND configuration
+ * here just makes the extra rates selectable without touching any other clock.
+ */
 static struct clk_freq_tbl ftbl_camss_mclk0_3_clk[] = {
+	F_MM( 9600000,    cxo,   2,   0,   0),
 	F_MM(19200000,    cxo,   1,   0,   0),
+	F_MM(24000000,  gpll0,   5,   1,   5),
 	F_MM(66670000,  gpll0,   9,   0,   0),
 	F_END
 };
@@ -3000,13 +3013,13 @@ static struct clk_freq_tbl ftbl_camss_mclk0_3_pro_clk[] = {
 
 static struct rcg_clk mclk0_clk_src = {
 	.cmd_rcgr_reg = MCLK0_CMD_RCGR,
-	.set_rate = set_rate_hid,
+	.set_rate = set_rate_mnd,
 	.freq_tbl = ftbl_camss_mclk0_3_clk,
 	.current_freq = &rcg_dummy_freq,
 	.base = &virt_bases[MMSS_BASE],
 	.c = {
 		.dbg_name = "mclk0_clk_src",
-		.ops = &clk_ops_rcg,
+		.ops = &clk_ops_rcg_mnd,
 		VDD_DIG_FMAX_MAP1(LOW, 66670000),
 		CLK_INIT(mclk0_clk_src.c),
 	},
@@ -3014,13 +3027,13 @@ static struct rcg_clk mclk0_clk_src = {
 
 static struct rcg_clk mclk1_clk_src = {
 	.cmd_rcgr_reg = MCLK1_CMD_RCGR,
-	.set_rate = set_rate_hid,
+	.set_rate = set_rate_mnd,
 	.freq_tbl = ftbl_camss_mclk0_3_clk,
 	.current_freq = &rcg_dummy_freq,
 	.base = &virt_bases[MMSS_BASE],
 	.c = {
 		.dbg_name = "mclk1_clk_src",
-		.ops = &clk_ops_rcg,
+		.ops = &clk_ops_rcg_mnd,
 		VDD_DIG_FMAX_MAP1(LOW, 66670000),
 		CLK_INIT(mclk1_clk_src.c),
 	},
@@ -3028,13 +3041,13 @@ static struct rcg_clk mclk1_clk_src = {
 
 static struct rcg_clk mclk2_clk_src = {
 	.cmd_rcgr_reg = MCLK2_CMD_RCGR,
-	.set_rate = set_rate_hid,
+	.set_rate = set_rate_mnd,
 	.freq_tbl = ftbl_camss_mclk0_3_clk,
 	.current_freq = &rcg_dummy_freq,
 	.base = &virt_bases[MMSS_BASE],
 	.c = {
 		.dbg_name = "mclk2_clk_src",
-		.ops = &clk_ops_rcg,
+		.ops = &clk_ops_rcg_mnd,
 		VDD_DIG_FMAX_MAP1(LOW, 66670000),
 		CLK_INIT(mclk2_clk_src.c),
 	},
@@ -3042,13 +3055,13 @@ static struct rcg_clk mclk2_clk_src = {
 
 static struct rcg_clk mclk3_clk_src = {
 	.cmd_rcgr_reg = MCLK3_CMD_RCGR,
-	.set_rate = set_rate_hid,
+	.set_rate = set_rate_mnd,
 	.freq_tbl = ftbl_camss_mclk0_3_clk,
 	.current_freq = &rcg_dummy_freq,
 	.base = &virt_bases[MMSS_BASE],
 	.c = {
 		.dbg_name = "mclk3_clk_src",
-		.ops = &clk_ops_rcg,
+		.ops = &clk_ops_rcg_mnd,
 		VDD_DIG_FMAX_MAP1(LOW, 66670000),
 		CLK_INIT(mclk3_clk_src.c),
 	},

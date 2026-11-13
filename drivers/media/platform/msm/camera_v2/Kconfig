@@ -222,3 +222,14 @@ config MSM_GEMINI
 	depends on MSMB_CAMERA && (ARCH_MSM7X30 || ARCH_MSM8X60 || ARCH_MSM8960)
 	---help---
 	  Enables support for the Gemini JPEG encoder engine for 8x60.
+
+config NOKIA_CAMERA_PROBE
+	bool "Nokia Lumia (martini/bandit) camera sensor identification probe"
+	depends on MSM_CAMERA_SENSOR && MSM_CCI && DEBUG_FS
+	---help---
+	  Read-only, on-demand helper for bringing up the Lumia 930/1520
+	  (martini/bandit) Karma rear and Skype_HD front SMIA++ modules.
+	  Powers a sensor with the device-tree sequence, scans candidate CCI
+	  addresses, reads the SMIA++ id and limit registers into dmesg, then
+	  powers down. Triggered through debugfs and disabled in the DT by
+	  default; it never writes a sensor register.
