@@ -764,6 +764,45 @@ int msm_sensor_config(struct msm_sensor_ctrl_t *s_ctrl, void __user *argp)
 		conf_array.reg_setting = reg_setting;
 		rc = s_ctrl->sensor_i2c_client->i2c_func_tbl->i2c_write_table(
 			s_ctrl->sensor_i2c_client, &conf_array);
+		if (s_ctrl->sensordata && s_ctrl->sensordata->sensor_name &&
+		    !strcmp(s_ctrl->sensordata->sensor_name, "skyphd")) {
+			int k, stream = 0;
+			char line[160];
+			int n = 0;
+
+			pr_info("lumia-sens: skyphd table size %u addr %d data %d delay %u rc %d\n",
+				conf_array.size, conf_array.addr_type,
+				conf_array.data_type, conf_array.delay, rc);
+			for (k = 0; k < conf_array.size; k++) {
+				if (reg_setting[k].reg_addr == 0x0100)
+					stream = reg_setting[k].reg_data;
+				n += scnprintf(line + n, sizeof(line) - n, " %04x=%04x",
+					reg_setting[k].reg_addr, reg_setting[k].reg_data);
+				if (n > 140 || k == conf_array.size - 1) {
+					pr_info("lumia-sens:%s\n", line);
+					n = 0;
+				}
+			}
+			if (stream) {
+				static const u16 rb[] = { 0x0005, 0x0112, 0x0114,
+					0x0340, 0x0341, 0x0342, 0x0343, 0x0344, 0x0345,
+					0x0346, 0x0347, 0x034c, 0x034d, 0x034e, 0x034f,
+					0x0808, 0x0820, 0x0821 };
+				uint16_t v;
+
+				msleep(100);
+				n = 0;
+				for (k = 0; k < ARRAY_SIZE(rb); k++) {
+					v = 0xffff;
+					s_ctrl->sensor_i2c_client->i2c_func_tbl->i2c_read(
+						s_ctrl->sensor_i2c_client, rb[k], &v,
+						MSM_CAMERA_I2C_BYTE_DATA);
+					n += scnprintf(line + n, sizeof(line) - n,
+						" %04x:%02x", rb[k], v);
+				}
+				pr_info("lumia-sens: skyphd readback%s\n", line);
+			}
+		}
 		kfree(reg_setting);
 		break;
 	}
