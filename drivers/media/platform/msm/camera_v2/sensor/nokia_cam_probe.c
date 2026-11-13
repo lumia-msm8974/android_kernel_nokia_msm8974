@@ -86,8 +86,8 @@ struct nokia_camprobe {
 #define TLMM_CFG(n)	(MSM_TLMM_BASE + 0x1000 + 0x10 * (n))
 #define TLMM_INOUT(n)	(MSM_TLMM_BASE + 0x1004 + 0x10 * (n))
 static void __iomem *lumia_cci_base;
-static const u16 lumia_pads[] = { 15, 17, 18, 19, 20, 21, 22, 83, 84, 89, 90,
-				  91, 92 };
+static const u16 lumia_pads[] = { 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 27,
+				  62, 83, 84, 89, 90, 91, 92, 100, 101, 116 };
 static const u16 lumia_cci_regs[] = { 0x000, 0x100, 0x104, 0x108, 0x10c,
 				      0x110, 0x11c, 0x300, 0x304, 0x308,
 				      0xc04, 0xc0c };
@@ -269,6 +269,27 @@ static void nokia_camprobe_extra_vregs(bool on)
 	}
 }
 
+/* extra_after: raise the extra_high GPIOs after the power sequence (rails
+ * and MCLK on), as a reset line would be released, instead of before. */
+static bool extra_after;
+module_param(extra_after, bool, 0644);
+
+static void nokia_camprobe_extra_gpios_high(void)
+{
+	int i, rc;
+
+	for (i = 0; i < n_extra_high; i++) {
+		rc = gpio_request_one(extra_high[i], GPIOF_OUT_INIT_HIGH,
+				      "camprobe_extra");
+		pr_info("extra gpio %d high: %s (%d)\n", extra_high[i],
+			rc ? "request failed" : "ok", rc);
+		if (rc)
+			extra_high[i] = -1;
+	}
+	if (n_extra_high)
+		msleep(20);
+}
+
 static void nokia_camprobe_dump_work(struct work_struct *work)
 {
 	nokia_camprobe_dump_hw("transfer pending");
@@ -372,16 +393,8 @@ static int nokia_camprobe_run(struct nokia_camprobe *p)
 	pr_info("power up (%u candidate address(es), cci master %u, standby %d, settle %d ms, rst/stby %s)\n",
 		p->num_addrs, p->cci_master, standby_level, settle_ms,
 		no_rst_stby ? "not driven" : "driven");
-	for (i = 0; i < n_extra_high; i++) {
-		rc = gpio_request_one(extra_high[i], GPIOF_OUT_INIT_HIGH,
-				      "camprobe_extra");
-		pr_info("extra gpio %d high: %s (%d)\n", extra_high[i],
-			rc ? "request failed" : "ok", rc);
-		if (rc)
-			extra_high[i] = -1;
-	}
-	if (n_extra_high)
-		msleep(20);
+	if (!extra_after)
+		nokia_camprobe_extra_gpios_high();
 	nokia_camprobe_extra_vregs(true);
 	if (n_extra_vreg)
 		msleep(5);
@@ -402,6 +415,8 @@ static int nokia_camprobe_run(struct nokia_camprobe *p)
 
 	/* msm_camera_power_up() already ran MSM_CCI_INIT for the platform device. */
 
+	if (extra_after)
+		nokia_camprobe_extra_gpios_high();
 	if (cci_master >= 0)
 		p->cci_client.cci_i2c_master = cci_master;
 	if (cci_master == 1) {
