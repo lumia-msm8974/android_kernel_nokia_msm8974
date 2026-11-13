@@ -143,6 +143,39 @@ module_param(cci_master, int, 0644);
 static int hold_ms;
 module_param(hold_ms, int, 0644);
 
+/* no_rst_stby: like Windows, never drive the reset/standby GPIOs (they are
+ * requested as inputs and their power sequence steps become no-ops). */
+static bool no_rst_stby;
+module_param(no_rst_stby, bool, 0644);
+
+static void nokia_camprobe_set_rst_stby(struct nokia_camprobe *p, bool skip)
+{
+	struct msm_camera_power_ctrl_t *pw = &p->power_info;
+	struct msm_camera_gpio_num_info *ni = pw->gpio_conf->gpio_num_info;
+	struct msm_sensor_power_setting *tbl[2] = { pw->power_setting,
+						    pw->power_down_setting };
+	int sizes[2] = { pw->power_setting_size, pw->power_down_setting_size };
+	int t, i;
+
+	for (t = 0; t < 2; t++)
+		for (i = 0; i < sizes[t]; i++) {
+			struct msm_sensor_power_setting *ps = &tbl[t][i];
+
+			if ((ps->seq_type == SENSOR_GPIO ||
+			     ps->seq_type == SENSOR_I2C_MUX) &&
+			    (ps->seq_val == SENSOR_GPIO_RESET ||
+			     ps->seq_val == SENSOR_GPIO_STANDBY))
+				ps->seq_type = skip ? SENSOR_I2C_MUX : SENSOR_GPIO;
+		}
+	for (i = 0; ni && i < pw->gpio_conf->cam_gpio_req_tbl_size; i++) {
+		struct gpio *g = &pw->gpio_conf->cam_gpio_req_tbl[i];
+
+		if (g->gpio == ni->gpio_num[SENSOR_GPIO_RESET] ||
+		    g->gpio == ni->gpio_num[SENSOR_GPIO_STANDBY])
+			g->flags = skip ? GPIOF_DIR_IN : GPIOF_OUT_INIT_LOW;
+	}
+}
+
 static void nokia_camprobe_dump_work(struct work_struct *work)
 {
 	nokia_camprobe_dump_hw("transfer pending");
@@ -241,8 +274,10 @@ static int nokia_camprobe_run(struct nokia_camprobe *p)
 		    ps->seq_val == SENSOR_GPIO_STANDBY)
 			ps->config_val = standby_level ? 1 : 0;
 	}
-	pr_info("power up (%u candidate address(es), cci master %u, standby %d, settle %d ms)\n",
-		p->num_addrs, p->cci_master, standby_level, settle_ms);
+	nokia_camprobe_set_rst_stby(p, no_rst_stby);
+	pr_info("power up (%u candidate address(es), cci master %u, standby %d, settle %d ms, rst/stby %s)\n",
+		p->num_addrs, p->cci_master, standby_level, settle_ms,
+		no_rst_stby ? "not driven" : "driven");
 	for (i = 0; i < n_extra_high; i++) {
 		rc = gpio_request_one(extra_high[i], GPIOF_OUT_INIT_HIGH,
 				      "camprobe_extra");
