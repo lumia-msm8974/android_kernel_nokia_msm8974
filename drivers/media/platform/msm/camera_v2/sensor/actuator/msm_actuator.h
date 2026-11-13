@@ -14,12 +14,15 @@
 
 #include <linux/i2c.h>
 #include <linux/gpio.h>
+#include <linux/mutex.h>
+#include <linux/workqueue.h>
 #include <mach/camera2.h>
 #include <media/v4l2-subdev.h>
 #include <media/msmb_camera.h>
 #include "msm_camera_i2c.h"
 #include "msm_camera_dt_util.h"
 #include "msm_camera_io_util.h"
+#include "msm_cci.h"
 
 
 #define DEFINE_MSM_MUTEX(mutexname) \
@@ -105,6 +108,31 @@ struct msm_actuator_ctrl_t {
 	uint32_t hw_params;
 #endif
 	enum msm_actuator_state_t actuator_state;
+	/* entries allocated in i2c_reg_tbl */
+	uint32_t i2c_tbl_size;
+	/* Lumia rear module (msm_actuator_lumia.c) */
+	uint8_t lumia_bridge;
+	uint8_t lumia_bridge_slave;
+	uint16_t lumia_sensor_sid;
+	uint16_t lumia_last_code;
+	uint8_t ois_present;
+	int ois_state;
+	const struct firmware *ois_fw;
+	struct mutex ois_lock;
+	struct work_struct ois_work;
+	struct msm_camera_i2c_client ois_client;
+	struct msm_camera_cci_client ois_cci;
 };
+
+struct device_node;
+void msm_actuator_lumia_parse_dt(struct msm_actuator_ctrl_t *a,
+	struct device_node *of_node);
+uint32_t msm_actuator_lumia_tbl_mult(struct msm_actuator_ctrl_t *a);
+void msm_actuator_lumia_fixup(struct msm_actuator_ctrl_t *a);
+void msm_actuator_lumia_bridge_append(struct msm_actuator_ctrl_t *a,
+	int16_t code, uint16_t delay);
+void msm_actuator_lumia_ois_work(struct work_struct *work);
+void msm_actuator_lumia_ois_start(struct msm_actuator_ctrl_t *a);
+void msm_actuator_lumia_ois_stop(struct msm_actuator_ctrl_t *a);
 
 #endif
