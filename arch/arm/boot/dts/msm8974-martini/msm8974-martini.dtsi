@@ -355,24 +355,49 @@
 };
 
 /*
- * BV-5QW, 2420 mAh (the Nokia profile; the mainline notes say 2500 mAh).
- * Without the BIF authentication Windows does, use the default table of
- * the stock battery.json, as the mainline port does: charge to 4.10 V at
- * 900 mA, minimum input 4.30 V, recharge below 4.00 V (vbatdet delta).
- * VDD_SAFE is write-once on the PM8941 and left by the UEFI, so it is not
- * set here. Safety timer raised for 2420 mAh at 900 mA.
+ * BV-5QW, 2420 mAh (the Nokia profile; battery.json says 2500 mAh, 9500
+ * mWh). Limits from the stock charging configuration in EFIESP of the
+ * RM-1045 FFU (battery.json of NokiaEnergyDriver.sys, PmicBattChg.cfg):
+ *
+ *  - pack not identified (the "default" table Windows uses until the MIPI
+ *    BIF authentication of the pack succeeds): 4.10 V, 900 mA between 10
+ *    and 45 C. Here also 4.10 V, 350 mA below 10 C and above 45 C (the
+ *    PM8941 defaults) until the BTC comparators stop charging;
+ *  - pack identified (battery ID 330 kOhm +- 10 %, see the profile and
+ *    of_batterydata; Windows: BIF authentication): the "bif" table,
+ *    4.35 V, 1800 mA between 10 and 45 C, 4.25 V, 900 mA between 0 and
+ *    10 C and between 45 and 60 C (nokia,hv-*). Windows also charges at
+ *    350 mA to 3.90 V between -10 and 0 C; here the cold comparator stops
+ *    charging at about +3 C first;
+ *  - termination 150 mA (iterm), USB VIN_MIN 4.30 V, maintenance below
+ *    4.25 V (4.35 V - 100 mV) as the "bif" table.
+ *
+ * Battery temperature: the kernel converts BATT_THERM with the Qualcomm
+ * reference table (adcmap_btm_threshold), the stock DSDT with its own
+ * table for the Lumia thermistor (ADC1 "BATT_THERM", method BTTB: 1308 mV
+ * at 0 C, 1125 mV at 10 C, 626 mV at 40 C, 515 mV at 50 C, 433 mV at
+ * 60 C). The JEITA thresholds below are the kernel readings of the real
+ * 10 C (1125 mV: 8.2 C) and 45 C (about 570 mV: 52.1 C). The comparators:
+ * cold 70 % of 1.8 V (1260 mV, about +3 C real), hot 25 % (450 mV, about
+ * 58 C real), both bits clear in BAT_IF_BTC_CTRL, written so that the
+ * UEFI choice does not matter.
+ *
+ * VDD_SAFE and IBAT_SAFE: the UEFI writes 4.40 V and 2000 mA
+ * (PmicBattChg.cfg) and VDD_SAFE is write-once (1520). vddsafe-mv is that
+ * value, so that the driver never tries to lock it lower; the charge
+ * voltage stays the vddmax above.
+ *
  * Qi wireless charging (stock SSDT \_SB.NEDD, NOKI0B00, the Nokia energy
- * driver): interrupts DCIN_VALID, BATT_PRES, WC_DET and CHG_GONE; outputs
- * WC_EN = PM8941 GPIO 7, WC_DET = GPIO 6 (input, pull-up, wake),
- * WC_PMA = GPIO 22. The receiver feeds the PM8941 DC input; GPIO 6, 7 and
- * 22 are left as the UEFI set them.
- * TODO(martini): read BATTERY.PROVISION / battery.json on the phone before
- * raising the limits towards 4.35 V; describe WC_EN/WC_DET if the DC path
- * does not charge on its own.
+ * driver): the receiver feeds the PM8941 DC input (interrupts DCIN_VALID,
+ * BATT_PRES, WC_DET and CHG_GONE); battery.json "wireless": VIN_MIN
+ * 6.60 V, input limit 600 mA, PMA off (registry
+ * PMAWirelessChargingSupport 0). The DC supply is reported as "Wireless".
+ * WC_EN (GPIO 7) and WC_DET (GPIO 6) are set up below.
  */
 &pm8941_bms {
 	status = "ok";
 	qcom,battery-data = <&martini_batterydata>;
+	/* 4.35 V from the profile when the pack is identified */
 	qcom,max-voltage-uv = <4100000>;
 };
 
@@ -380,11 +405,32 @@
 	status = "ok";
 	qcom,battery-data = <&martini_batterydata>;
 	qcom,vddmax-mv = <4100>;
+	qcom,vddsafe-mv = <4400>;
 	qcom,vinmin-mv = <4300>;
 	qcom,ibatmax-ma = <900>;
 	qcom,ibatsafe-ma = <900>;
+	qcom,ibatterm-ma = <150>;
 	qcom,vbatdet-delta-mv = <100>;
 	qcom,tchg-mins = <240>;
+	qcom,cool-bat-decidegc = <82>;
+	qcom,warm-bat-decidegc = <521>;
+	qcom,cool-bat-mv = <4100>;
+	qcom,ibatmax-cool-ma = <350>;
+	qcom,warm-bat-mv = <4100>;
+	qcom,ibatmax-warm-ma = <350>;
+	qcom,batt-hot-percentage = <25>;
+	qcom,batt-cold-percentage = <70>;
+
+	nokia,hv-vddmax-mv = <4350>;
+	nokia,hv-ibatmax-ma = <1800>;
+	nokia,hv-cool-bat-mv = <4250>;
+	nokia,hv-ibatmax-cool-ma = <900>;
+	nokia,hv-warm-bat-mv = <4250>;
+	nokia,hv-ibatmax-warm-ma = <900>;
+
+	qcom,maxinput-dc-ma = <600>;
+	nokia,dc-vinmin-mv = <6600>;
+	nokia,dc-wireless;
 
 	qcom,chgr@1000 {
 		status = "ok";
@@ -457,6 +503,35 @@
 		qcom,mode = <0>;
 		qcom,pull = <0>;
 		qcom,vin-sel = <2>;
+		qcom,src-sel = <0>;
+		qcom,master-en = <1>;
+	};
+
+	/*
+	 * GPIO 6: WC_DET from the Qi receiver (SSDT \_SB.NEDD: input with
+	 * pull-up, interrupt on both edges). Only read for diagnostics: the
+	 * charger follows DCIN_VALID.
+	 */
+	gpio@c500 {
+		qcom,mode = <0>;
+		qcom,pull = <0>;
+		qcom,master-en = <1>;
+	};
+
+	/*
+	 * GPIO 7: WC_EN of the Qi receiver (SSDT \_SB.NEDD, exclusive output,
+	 * no pull). NokiaEnergyDriver.sys writes it as the "wireless sleep
+	 * mode": high only while it lets a full battery discharge
+	 * (maintenance discharging, "bif" table only), low otherwise. So low
+	 * keeps the receiver on, as Windows does whenever the pack is not
+	 * authenticated.
+	 */
+	gpio@c600 {
+		qcom,mode = <1>;
+		qcom,output-type = <0>;
+		qcom,invert = <0>;
+		qcom,vin-sel = <2>;
+		qcom,out-strength = <1>;
 		qcom,src-sel = <0>;
 		qcom,master-en = <1>;
 	};

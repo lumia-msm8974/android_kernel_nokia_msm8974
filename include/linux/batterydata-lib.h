@@ -108,6 +108,9 @@ enum battery_type {
  * @iterm_ua:		termination current of the battery when charging
  *			to 100%
  * @batt_id_kohm:	the best matched battery id resistor value
+ * @hv_state:		result of the optional high voltage check of the
+ *			profile (BATT_HV_*): with BATT_HV_REJECTED the
+ *			profile's max_voltage_uv is not reported (-EINVAL)
  */
 
 struct bms_battery_data {
@@ -125,7 +128,13 @@ struct bms_battery_data {
 	int			cutoff_uv;
 	int			iterm_ua;
 	int			batt_id_kohm;
+	int			hv_state;
 };
+
+/* bms_battery_data.hv_state */
+#define BATT_HV_NO_CHECK	0	/* profile without a high voltage check */
+#define BATT_HV_REJECTED	1	/* check failed: use the board defaults */
+#define BATT_HV_ACCEPTED	2	/* check passed: profile voltage allowed */
 
 #if defined(CONFIG_PM8921_BMS) || \
 	defined(CONFIG_PM8921_BMS_MODULE) || \
