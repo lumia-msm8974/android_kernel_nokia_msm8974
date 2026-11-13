@@ -786,6 +786,8 @@ static int32_t msm_actuator_config(struct msm_actuator_ctrl_t *a_ctrl,
 
 	case CFG_SET_ACTUATOR_INFO:
 		rc = msm_actuator_init(a_ctrl, &cdata->cfg.set_info);
+		pr_info("lumia-af: set_info rc %d total_steps %d tbl %u bridge %d\n", rc,
+			a_ctrl->total_steps, a_ctrl->i2c_tbl_size, a_ctrl->lumia_bridge);
 		if (rc < 0)
 			pr_err("init table failed %d\n", rc);
 		else
@@ -802,6 +804,12 @@ static int32_t msm_actuator_config(struct msm_actuator_ctrl_t *a_ctrl,
 	case CFG_MOVE_FOCUS:
 		rc = a_ctrl->func_tbl->actuator_move_focus(a_ctrl,
 			&cdata->cfg.move);
+		pr_info_ratelimited("lumia-af: move dir %d steps %d dest %d -> lens %d rc %d (bridge %d sid 0x%x)\n",
+			cdata->cfg.move.dir, cdata->cfg.move.num_steps,
+			cdata->cfg.move.dest_step_pos,
+			cdata->cfg.move.curr_lens_pos, rc, a_ctrl->lumia_bridge,
+			a_ctrl->i2c_client.cci_client ?
+			a_ctrl->i2c_client.cci_client->sid : 0);
 		if (rc < 0)
 			pr_err("move focus failed %d\n", rc);
 		break;
