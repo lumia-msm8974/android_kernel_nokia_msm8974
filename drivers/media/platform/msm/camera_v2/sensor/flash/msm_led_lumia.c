@@ -56,6 +56,7 @@ struct lumia_flash {
 	struct mutex lock;
 	int state;
 	u8 id, rev, led_type, led_info_read;
+	bool cci_on;
 };
 
 static struct lumia_flash lf;
@@ -133,11 +134,31 @@ static void lumia_flash_read_led_info(void)
 		lf.id, lf.rev, d0, d1, lf.led_type, v);
 }
 
+/* The daemon sends LED_INIT before the sensor powers up: the CCI master has
+ * to be brought up here, and dropped again on release. */
+static int lumia_flash_cci(bool on)
+{
+	int rc;
+
+	if (lf.cci_on == on)
+		return 0;
+	rc = msm_sensor_cci_i2c_util(&lf.i2c, on ? MSM_CCI_INIT : MSM_CCI_RELEASE);
+	if (rc < 0) {
+		pr_err("CCI %s failed: %d\n", on ? "init" : "release", rc);
+		return rc;
+	}
+	lf.cci_on = on;
+	return 0;
+}
+
 static int lumia_flash_init(void)
 {
 	u8 v = 0;
 	int rc;
 
+	rc = lumia_flash_cci(true);
+	if (rc < 0)
+		return rc;
 	rc = rd(0x00, &lf.id);
 	if (rc < 0)
 		return rc;
@@ -199,17 +220,23 @@ static int lumia_flash_config(struct msm_camera_led_cfg_t *cfg)
 		rc = lumia_flash_init();
 		break;
 	case MSM_CAMERA_LED_LOW:
-		rc = lumia_flash_fire(1);
+		rc = lumia_flash_cci(true);
+		if (rc >= 0)
+			rc = lumia_flash_fire(1);
 		break;
 	case MSM_CAMERA_LED_HIGH:
-		rc = lumia_flash_fire(0);
+		rc = lumia_flash_cci(true);
+		if (rc >= 0)
+			rc = lumia_flash_fire(0);
 		break;
 	case MSM_CAMERA_LED_OFF:
 	case MSM_CAMERA_LED_RELEASE:
-		if (lf.state == MSM_CAMERA_LED_LOW ||
+		if (lf.cci_on && (lf.state == MSM_CAMERA_LED_LOW ||
 		    lf.state == MSM_CAMERA_LED_HIGH ||
-		    cfg->cfgtype == MSM_CAMERA_LED_OFF)
+		    cfg->cfgtype == MSM_CAMERA_LED_OFF))
 			rc = lumia_flash_off();
+		if (cfg->cfgtype == MSM_CAMERA_LED_RELEASE)
+			lumia_flash_cci(false);
 		break;
 	default:
 		rc = -EINVAL;
