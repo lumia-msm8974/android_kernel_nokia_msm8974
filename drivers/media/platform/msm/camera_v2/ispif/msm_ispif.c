@@ -557,7 +557,7 @@ static int msm_ispif_config(struct ispif_device *ispif,
 
 		vfe_intf = params->entries[i].vfe_intf;
 
-		CDBG("%s intftype %x, vfe_intf %d, csid %d\n", __func__,
+		pr_info("lumia-ispif: %s intftype %x, vfe_intf %d, csid %d\n", __func__,
 			intftype, vfe_intf, params->entries[i].csid);
 
 		if ((intftype >= INTF_MAX) ||
