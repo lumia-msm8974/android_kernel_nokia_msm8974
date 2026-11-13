@@ -906,6 +906,17 @@
  * RGB order) is also taken from the controller the UEFI left running.
  */
 &mdss_mdp {
+	/*
+	 * The 2.3 GB/s msm8974 default makes the overlay check reject three or
+	 * four full-screen layers (3.1-4.3 GB/s with the 2x fudge factor): the
+	 * HWC then leaves launcher, status bar and notification shade to GPU
+	 * composition, on top of the GPU work of the shade itself. The bus vote
+	 * follows the computed bandwidth and the LPDDR3 has the headroom; no
+	 * underrun with the shade fully on MDP pipes.
+	 */
+	qcom,max-bandwidth-low-kbps = <4500000>;
+	qcom,max-bandwidth-high-kbps = <4500000>;
+
 	dsi_martini_amoled_video: qcom,mdss_dsi_martini_amoled_video {
 		qcom,mdss-dsi-panel-name = "martini 1080p amoled video";
 		qcom,mdss-dsi-panel-controller = <&mdss_dsi0>;
