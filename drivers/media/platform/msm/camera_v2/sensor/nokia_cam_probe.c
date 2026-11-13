@@ -62,6 +62,7 @@ static struct msm_cam_clk_info cam_8974_clk_info_local[] = {
 static struct msm_camera_i2c_fn_t nokia_camprobe_cci_tbl = {
 	.i2c_read = msm_camera_cci_i2c_read,
 	.i2c_read_seq = msm_camera_cci_i2c_read_seq,
+	.i2c_write = msm_camera_cci_i2c_write,
 	.i2c_util = msm_sensor_cci_i2c_util,
 };
 
@@ -311,6 +312,78 @@ static int nokia_camprobe_read(struct nokia_camprobe *p, u32 addr, u16 *val,
 	return msm_camera_cci_i2c_read(&p->i2c_client, addr, val, dt);
 }
 
+/*
+ * dump_ranges: extra 16-bit register ranges (start, end, start, end...) read
+ * from every DT candidate address that answers, after the standard dump.
+ */
+static int dump_ranges[16];
+static int n_dump_ranges;
+module_param_array(dump_ranges, int, &n_dump_ranges, 0644);
+
+static void nokia_camprobe_dump_ranges(struct nokia_camprobe *p, u16 sid)
+{
+	int r, a, i;
+
+	for (r = 0; r + 1 < n_dump_ranges; r += 2) {
+		for (a = dump_ranges[r] & ~0xf; a <= dump_ranges[r + 1]; a += 16) {
+			u8 line[16];
+			u16 v;
+
+			for (i = 0; i < 16; i++) {
+				v = 0xff;
+				nokia_camprobe_read(p, a + i, &v,
+						    MSM_CAMERA_I2C_BYTE_DATA);
+				line[i] = v & 0xff;
+			}
+			pr_info("    0x%02x %04x: %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x\n",
+				sid, a, line[0], line[1], line[2], line[3],
+				line[4], line[5], line[6], line[7], line[8],
+				line[9], line[10], line[11], line[12],
+				line[13], line[14], line[15]);
+		}
+	}
+}
+
+/*
+ * Sensor at 0x10 only (the identified SMIA sensor of the module being
+ * scanned): wr_regs = 16-bit register, 8-bit value pairs written after the
+ * dumps; with stream_ms > 0, 0x0100 = 1 (streaming), the SMIA frame counter
+ * 0x0005 is read before and after stream_ms, then 0x0100 = 0. The CSIPHY and
+ * CSID are not configured, so the MIPI output goes nowhere.
+ */
+static int wr_regs[64];
+static int n_wr_regs;
+module_param_array(wr_regs, int, &n_wr_regs, 0644);
+static int stream_ms;
+module_param(stream_ms, int, 0644);
+
+static void nokia_camprobe_stream_test(struct nokia_camprobe *p)
+{
+	struct msm_camera_i2c_client *c = &p->i2c_client;
+	u16 f0 = 0, f1 = 0;
+	int i, rc;
+
+	c->addr_type = MSM_CAMERA_I2C_WORD_ADDR;
+	for (i = 0; i + 1 < n_wr_regs; i += 2) {
+		rc = c->i2c_func_tbl->i2c_write(c, wr_regs[i], wr_regs[i + 1],
+						MSM_CAMERA_I2C_BYTE_DATA);
+		pr_info("    write [0x%04x] = 0x%02x: %d\n", wr_regs[i],
+			wr_regs[i + 1], rc);
+	}
+	if (stream_ms <= 0)
+		return;
+	nokia_camprobe_read(p, 0x0005, &f0, MSM_CAMERA_I2C_BYTE_DATA);
+	rc = c->i2c_func_tbl->i2c_write(c, 0x0100, 0x01,
+					MSM_CAMERA_I2C_BYTE_DATA);
+	msleep(100);
+	nokia_camprobe_read(p, 0x0005, &f0, MSM_CAMERA_I2C_BYTE_DATA);
+	msleep(stream_ms);
+	nokia_camprobe_read(p, 0x0005, &f1, MSM_CAMERA_I2C_BYTE_DATA);
+	c->i2c_func_tbl->i2c_write(c, 0x0100, 0x00, MSM_CAMERA_I2C_BYTE_DATA);
+	pr_info("    stream %d: frame_count %u -> %u in %d ms (%u frames)\n",
+		rc, f0 & 0xff, f1 & 0xff, stream_ms, (f1 - f0) & 0xff);
+}
+
 static int nokia_camprobe_dump_ids(struct nokia_camprobe *p, u16 sid,
 				   bool quiet)
 {
@@ -453,7 +526,11 @@ static int nokia_camprobe_run(struct nokia_camprobe *p)
 	for (i = 0; i < p->num_addrs; i++) {
 		p->cci_client.sid = p->addrs[i];      /* 7-bit */
 		p->i2c_client.addr_type = MSM_CAMERA_I2C_WORD_ADDR;
-		nokia_camprobe_dump_ids(p, p->addrs[i], false);
+		if (nokia_camprobe_dump_ids(p, p->addrs[i], false) == 0 &&
+		    p->addrs[i] == 0x10) {
+			nokia_camprobe_dump_ranges(p, p->addrs[i]);
+			nokia_camprobe_stream_test(p);
+		}
 	}
 	if (scan_all) {
 		int found = 0;
