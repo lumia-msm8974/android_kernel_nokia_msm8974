@@ -247,6 +247,9 @@ struct qpnp_bms_chip {
 
 	int				system_load_count;
 	int				prev_uuc_iavg_ma;
+	/* slow average of the signed battery current, > 0 discharging */
+	int				net_iavg_ua;
+	bool				net_iavg_valid;
 	int				prev_pc_unusable;
 	int				ibat_at_cv_ua;
 	int				soc_at_cv;
@@ -1110,9 +1113,12 @@ static int read_soc_params_raw(struct qpnp_bms_chip *chip,
 		pr_debug("PON_OCV_UV = %d, cc = %llx\n",
 				chip->last_ocv_uv, raw->cc);
 		warm_reset = qpnp_pon_is_warm_reset();
+		pr_info("pon ocv %d uV, warm reset %d, temp %d\n",
+				raw->last_good_ocv_uv, warm_reset, batt_temp);
 		if (raw->last_good_ocv_uv < MIN_OCV_UV || warm_reset > 0) {
 			pr_debug("OCV is stale or bad, estimating new OCV.\n");
 			chip->last_ocv_uv = estimate_ocv(chip, batt_temp);
+			pr_info("estimated ocv %d uV\n", chip->last_ocv_uv);
 			raw->last_good_ocv_uv = chip->last_ocv_uv;
 			reset_cc(chip, CLEAR_CC | CLEAR_SHDW_CC);
 			pr_debug("New PON_OCV_UV = %d, cc = %llx\n",
@@ -1142,6 +1148,8 @@ static int read_soc_params_raw(struct qpnp_bms_chip *chip,
 				chip->ocv_reading_at_100);
 	} else if (chip->prev_last_good_ocv_raw != raw->last_good_ocv_raw) {
 		convert_and_store_ocv(chip, raw, batt_temp, false);
+		pr_info("new hw ocv %d uV, temp %d\n",
+				raw->last_good_ocv_uv, batt_temp);
 		/* forget the old cc value upon ocv */
 		chip->last_cc_uah = INT_MIN;
 	} else {
@@ -1608,6 +1616,23 @@ static int calculate_delta_time(unsigned long *time_stamp, int *delta_time_s)
 	return 0;
 }
 
+/*
+ * Signed battery current averaged over about a minute (one sample per SoC
+ * calculation, 20 s by default). A charger that is present and enabled does
+ * not mean the battery gains charge: on a 500 mA USB port the system can
+ * draw more than the port gives, the charger still reports CHARGING and the
+ * battery discharges.
+ */
+static void update_net_iavg(struct qpnp_bms_chip *chip, int iavg_ua)
+{
+	if (!chip->net_iavg_valid) {
+		chip->net_iavg_ua = iavg_ua;
+		chip->net_iavg_valid = true;
+	} else {
+		chip->net_iavg_ua = (3 * chip->net_iavg_ua + iavg_ua) / 4;
+	}
+}
+
 static void calculate_soc_params(struct qpnp_bms_chip *chip,
 						struct raw_soc_params *raw,
 						struct soc_params *params,
@@ -1649,6 +1674,7 @@ static void calculate_soc_params(struct qpnp_bms_chip *chip,
 
 	calculate_iavg(chip, params->cc_uah, &params->iavg_ua,
 						params->delta_time_s);
+	update_net_iavg(chip, params->iavg_ua);
 
 	params->uuc_uah = calculate_unusable_charge_uah(chip, params,
 							batt_temp);
@@ -1812,6 +1838,8 @@ static int report_voltage_based_soc(struct qpnp_bms_chip *chip)
 #define SOC_CATCHUP_SEC_PER_PERCENT	60
 #define MAX_CATCHUP_SOC	(SOC_CATCHUP_SEC_MAX / SOC_CATCHUP_SEC_PER_PERCENT)
 #define SOC_CHANGE_PER_SEC		5
+/* net average current above which a charging battery counts as discharging */
+#define NET_CHARGE_MAX_IAVG_UA		(-20000)
 #define REPORT_SOC_WAIT_MS		10000
 static int report_cc_based_soc(struct qpnp_bms_chip *chip)
 {
@@ -1854,6 +1882,15 @@ static int report_cc_based_soc(struct qpnp_bms_chip *chip)
 	calculate_delta_time(&last_change_sec, &time_since_last_change_sec);
 
 	charging = chip->battery_status == POWER_SUPPLY_STATUS_CHARGING;
+	/*
+	 * Charger present but the battery discharging on average (weak USB
+	 * port, heavy load): report it as discharging, so that the SoC cannot
+	 * climb back on the unusable-charge and estimation noise while the
+	 * charge actually goes down.
+	 */
+	if (charging && chip->net_iavg_valid
+			&& chip->net_iavg_ua > NET_CHARGE_MAX_IAVG_UA)
+		charging = false;
 	charging_since_last_report = charging || (chip->last_soc_unbound
 			&& chip->was_charging_at_sleep);
 	/*
@@ -1926,6 +1963,14 @@ static int report_cc_based_soc(struct qpnp_bms_chip *chip)
 
 	if (chip->last_soc != soc && !chip->last_soc_unbound)
 		chip->last_soc_change_sec = last_change_sec;
+
+	if (chip->last_soc != soc)
+		pr_info("reported soc %d -> %d: calculated %d, net iavg %d mA, uuc iavg %d mA, unusable %d%%, chg %d/%d\n",
+			chip->last_soc, bound_soc(soc), chip->calculated_soc,
+			chip->net_iavg_ua / 1000, chip->prev_uuc_iavg_ma,
+			chip->prev_pc_unusable,
+			chip->battery_status == POWER_SUPPLY_STATUS_CHARGING,
+			charging);
 
 	pr_debug("last_soc = %d, calculated_soc = %d, soc = %d, time since last change = %d\n",
 			chip->last_soc, chip->calculated_soc,
@@ -2462,7 +2507,7 @@ static int calculate_state_of_charge(struct qpnp_bms_chip *chip,
 					(params.fcc_uah
 						- params.uuc_uah));
 
-		pr_debug("DONE for shutdown_soc = %d soc is %d, adjusted ocv to %duV\n",
+		pr_info("forced shutdown soc %d: soc %d, ocv %d uV\n",
 				shutdown_soc, soc, chip->last_ocv_uv);
 	}
 	mutex_unlock(&chip->soc_invalidation_mutex);
@@ -3602,8 +3647,9 @@ static void load_shutdown_data(struct qpnp_bms_chip *chip)
 	calculated_soc = recalculate_raw_soc(chip);
 	shutdown_soc_out_of_limit = (abs(shutdown_soc - calculated_soc)
 			> chip->shutdown_soc_valid_limit);
-	pr_debug("calculated_soc = %d, valid_limit = %d\n",
-			calculated_soc, chip->shutdown_soc_valid_limit);
+	pr_info("shutdown soc %d, calculated %d, valid limit %d\n",
+			shutdown_soc, calculated_soc,
+			chip->shutdown_soc_valid_limit);
 
 	/*
 	 * Check if the battery has been replaced while the system was powered
