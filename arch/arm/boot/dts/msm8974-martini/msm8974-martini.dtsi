@@ -1136,3 +1136,20 @@
  * (msm8974-camera-sensor-lumia.dtsi) or, in the camprobe test DTB, the
  * identification probe nodes in their place.
  */
+
+/*
+ * Camera control interface in I2C fast mode (400 kHz with the 19.2 MHz CCI
+ * clock, the msm8226 fast mode timings). At 100 kHz the 8 KiB OIS firmware
+ * download takes about 1.2 s at every rear camera start and delays the
+ * sensor writes that share the master.
+ */
+&master0 {
+	qcom,hw-thigh = <20>;
+	qcom,hw-tlow = <28>;
+	qcom,hw-tsu-sto = <21>;
+	qcom,hw-tsu-sta = <21>;
+	qcom,hw-thd-dat = <13>;
+	qcom,hw-thd-sta = <18>;
+	qcom,hw-tbuf = <25>;
+	qcom,hw-tsp = <3>;
+};
