@@ -374,7 +374,15 @@ void msm_actuator_lumia_ois_start(struct msm_actuator_ctrl_t *a)
 {
 	if (!a->ois_present || !lumia_ois)
 		return;
-	mutex_lock(&a->ois_lock);
+	/*
+	 * The daemon sends CFG_SET_ACTUATOR_INFO again while the firmware
+	 * download of the first one is running, and the download holds
+	 * ois_lock for about a second. Busy means a download (or a power
+	 * down) is running: nothing to start, and the second call, with the
+	 * preview start behind it, must not wait for it.
+	 */
+	if (!mutex_trylock(&a->ois_lock))
+		return;
 	if (a->ois_state == OIS_COLD) {
 		a->ois_state = OIS_LOADING;
 		schedule_work(&a->ois_work);
