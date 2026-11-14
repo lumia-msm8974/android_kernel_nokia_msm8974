@@ -13,9 +13,34 @@
 #define pr_fmt(fmt) "%s:%d " fmt, __func__, __LINE__
 
 #include <linux/module.h>
+#include <linux/mm.h>
+#include <linux/vmalloc.h>
 #include "msm_sd.h"
 #include "msm_actuator.h"
 #include "msm_cci.h"
+
+/*
+ * The lens code table is total_steps + 1 entries per register write (up to
+ * several per step on the Lumia lens drivers), tens of kilobytes. It is only
+ * read by the CPU to build CCI transfers, so it does not need to be
+ * physically contiguous: fall back to vmalloc when memory is fragmented,
+ * otherwise CFG_SET_ACTUATOR_INFO fails with -ENOMEM and autofocus is lost
+ * for the whole session.
+ */
+static void *msm_actuator_alloc_reg_tbl(size_t size)
+{
+	void *p = kzalloc(size, GFP_KERNEL | __GFP_NOWARN);
+
+	return p ? p : vzalloc(size);
+}
+
+static void msm_actuator_free_reg_tbl(void *p)
+{
+	if (is_vmalloc_addr(p))
+		vfree(p);
+	else
+		kfree(p);
+}
 
 DEFINE_MSM_MUTEX(msm_actuator_mutex);
 
@@ -556,7 +581,7 @@ static int32_t msm_actuator_power_down(struct msm_actuator_ctrl_t *a_ctrl)
 			kfree(a_ctrl->step_position_table);
 		a_ctrl->step_position_table = NULL;
 		if (a_ctrl->i2c_reg_tbl != NULL)
-			kfree(a_ctrl->i2c_reg_tbl);
+			msm_actuator_free_reg_tbl(a_ctrl->i2c_reg_tbl);
 		a_ctrl->i2c_reg_tbl = NULL;
 		a_ctrl->i2c_tbl_index = 0;
 		a_ctrl->actuator_state = ACTUATOR_POWER_DOWN;
@@ -569,7 +594,7 @@ static int32_t msm_actuator_power_down(struct msm_actuator_ctrl_t *a_ctrl)
 
 	kfree(a_ctrl->step_position_table);
 	a_ctrl->step_position_table = NULL;
-	kfree(a_ctrl->i2c_reg_tbl);
+	msm_actuator_free_reg_tbl(a_ctrl->i2c_reg_tbl);
 	a_ctrl->i2c_reg_tbl = NULL;
 	a_ctrl->i2c_tbl_index = 0;
 	CDBG("Exit\n");
@@ -695,14 +720,13 @@ static int32_t msm_actuator_init(struct msm_actuator_ctrl_t *a_ctrl,
 
 	if ((a_ctrl->actuator_state == ACTUATOR_POWER_UP) &&
 		(a_ctrl->i2c_reg_tbl != NULL))
-		kfree(a_ctrl->i2c_reg_tbl);
+		msm_actuator_free_reg_tbl(a_ctrl->i2c_reg_tbl);
 
 	a_ctrl->i2c_reg_tbl = NULL;
 	a_ctrl->i2c_tbl_size = (set_info->af_tuning_params.total_steps + 1) *
 		msm_actuator_lumia_tbl_mult(a_ctrl);
-	a_ctrl->i2c_reg_tbl =
-		kzalloc(sizeof(struct msm_camera_i2c_reg_array) *
-		a_ctrl->i2c_tbl_size, GFP_KERNEL);
+	a_ctrl->i2c_reg_tbl = msm_actuator_alloc_reg_tbl(
+		sizeof(struct msm_camera_i2c_reg_array) * a_ctrl->i2c_tbl_size);
 	if (!a_ctrl->i2c_reg_tbl) {
 		pr_err("kzalloc fail\n");
 		return -ENOMEM;
@@ -712,7 +736,7 @@ static int32_t msm_actuator_init(struct msm_actuator_ctrl_t *a_ctrl,
 		(void *)set_info->actuator_params.reg_tbl_params,
 		a_ctrl->reg_tbl_size *
 		sizeof(struct msm_actuator_reg_params_t))) {
-		kfree(a_ctrl->i2c_reg_tbl);
+		msm_actuator_free_reg_tbl(a_ctrl->i2c_reg_tbl);
 		a_ctrl->i2c_reg_tbl = NULL;
 		return -EFAULT;
 	}
@@ -725,7 +749,7 @@ static int32_t msm_actuator_init(struct msm_actuator_ctrl_t *a_ctrl,
 				(set_info->actuator_params.init_setting_size),
 				GFP_KERNEL);
 			if (init_settings == NULL) {
-				kfree(a_ctrl->i2c_reg_tbl);
+				msm_actuator_free_reg_tbl(a_ctrl->i2c_reg_tbl);
 				a_ctrl->i2c_reg_tbl = NULL;
 				pr_err("Error allocating memory for init_settings\n");
 				return -EFAULT;
@@ -735,7 +759,7 @@ static int32_t msm_actuator_init(struct msm_actuator_ctrl_t *a_ctrl,
 				set_info->actuator_params.init_setting_size *
 				sizeof(struct reg_settings_t))) {
 				kfree(init_settings);
-				kfree(a_ctrl->i2c_reg_tbl);
+				msm_actuator_free_reg_tbl(a_ctrl->i2c_reg_tbl);
 				a_ctrl->i2c_reg_tbl = NULL;
 				pr_err("Error copying init_settings\n");
 				return -EFAULT;
@@ -746,7 +770,7 @@ static int32_t msm_actuator_init(struct msm_actuator_ctrl_t *a_ctrl,
 			kfree(init_settings);
 			init_settings = NULL;
 			if (rc < 0) {
-				kfree(a_ctrl->i2c_reg_tbl);
+				msm_actuator_free_reg_tbl(a_ctrl->i2c_reg_tbl);
 				a_ctrl->i2c_reg_tbl = NULL;
 				pr_err("Error actuator_init_focus\n");
 				return -EFAULT;
@@ -919,7 +943,7 @@ static int msm_actuator_close(struct v4l2_subdev *sd,
 		if (rc < 0)
 			pr_err("cci_init failed\n");
 	}
-	kfree(a_ctrl->i2c_reg_tbl);
+	msm_actuator_free_reg_tbl(a_ctrl->i2c_reg_tbl);
 	a_ctrl->i2c_reg_tbl = NULL;
 	mutex_unlock(a_ctrl->actuator_mutex);
 
