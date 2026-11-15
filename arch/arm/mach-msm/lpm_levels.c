@@ -260,6 +260,9 @@ static void lpm_system_level_update(void)
 	else
 		allowed_l2_mode = default_l2_mode;
 	max_l2_mode = min(allowed_l2_mode, sysfs_dbg_l2_mode);
+	if (msm_tz_restricted())
+		max_l2_mode = min_t(int, max_l2_mode,
+				    max_t(int, lumia_tzpc_l2_max(), default_l2_mode));
 
 	for (i = 0; i < sys_state.num_system_levels; i++) {
 		l = &sys_state.system_level[i];
@@ -1041,11 +1044,13 @@ static int lpm_system_probe(struct platform_device *pdev)
 		l++;
 	}
 	/*
-	 * Restricted TrustZone (Lumia): never use a system level (L2 GDHS or
-	 * power collapse, RPM sleep set, MPM). Only the per-core standalone
-	 * power collapse of lumia-tzpc.c is possible, with the L2 left on.
+	 * Restricted TrustZone (Lumia): no system level (L2 GDHS or power
+	 * collapse, RPM sleep set, MPM), only the per-core standalone power
+	 * collapse of lumia-tzpc.c with the L2 left on. With lumia_tzpc.l2=2
+	 * the cores are counted in sync from standalone power collapse, so the
+	 * L2 GDHS level can be used (lpm_system_level_update caps the rest).
 	 */
-	if (msm_tz_restricted())
+	if (msm_tz_restricted() && lumia_tzpc_l2_max() < MSM_SPM_L2_MODE_GDHS)
 		sys_state.sync_cpu_mode = MSM_PM_SLEEP_MODE_NR;
 	sys_state.system_level = level;
 	sys_state.num_system_levels = num_levels;
@@ -1069,6 +1074,10 @@ static int lpm_probe(struct platform_device *pdev)
 
 	key = "qcom,no-l2-saw";
 	sys_state.no_l2_saw = of_property_read_bool(node, key);
+
+	/* Lumia: the L2 GDHS level with all the cores online (lumia-tzpc.c) */
+	if (lumia_tzpc_l2_max() >= MSM_SPM_L2_MODE_GDHS)
+		sys_state.allow_synched_levels = true;
 
 	sys_state.sync_cpu_mode = MSM_PM_SLEEP_MODE_NR;
 	spin_lock_init(&sys_state.sync_lock);

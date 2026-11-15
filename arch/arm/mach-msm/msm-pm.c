@@ -495,7 +495,7 @@ static int msm_pm_collapse(unsigned long unused)
 	if (cpu_count == num_online_cpus())
 		flag = msm_pm_get_l2_flush_flag();
 	if (msm_tz_restricted())
-		flag = lumia_tzpc_l2_flag();	/* never touch the L2 here */
+		flag = lumia_tzpc_l2_flag(flag); /* L2 on unless lumia_tzpc.l2 */
 
 	pr_debug("cpu:%d cores_in_pc:%d L2 flag: %d\n",
 			cpu, cpu_count, flag);

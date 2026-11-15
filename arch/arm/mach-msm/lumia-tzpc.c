@@ -28,8 +28,15 @@
  * Here the entry is lumia_pm_boot_entry (idle-v7.S): it puts the mailbox id
  * back to idle (0xffffffff, the value the SMP bring-up expects) and joins
  * the usual msm_pm_boot_entry, which jumps to msm_pm_boot_vector[cpu]
- * (cpu_resume). The L2 is never flushed, collapsed or put to sleep: the
- * flags given to the TrustZone are always "L2 on".
+ * (cpu_resume).
+ *
+ * The L2 stays on unless lumia_tzpc.l2=2 is given on the kernel command
+ * line. Then lpm_levels may pick its L2 GDHS system level once all the
+ * online cores are in standalone power collapse: it arms the L2 SAW2 with
+ * the GDHS sequence (the same bytes as Windows) and the last core passes
+ * the GDHS flag (3) to TERMINATE_PC. GDHS keeps the L2 contents, so
+ * nothing is flushed. L2 power collapse, the RPM sleep set and XO shutdown
+ * are not allowed yet.
  */
 
 #include <linux/init.h>
@@ -42,6 +49,8 @@
 #include <asm/smp_plat.h>
 #include <mach/tz-restricted.h>
 #include "idle.h"
+#include "pm.h"
+#include "spm.h"
 #include "lumia-tzpc.h"
 
 static bool tzpc_enable;
@@ -92,10 +101,36 @@ bool lumia_tzpc_cpu_allowed(unsigned int cpu)
 		lumia_park_mailbox(cpu);
 }
 
-/* SCM flags for TERMINATE_PC: low nibble 0 = L2 stays on (MSM_SCM_L2_ON) */
-unsigned int lumia_tzpc_l2_flag(void)
+/*
+ * Deepest L2 low power mode lpm_levels may use, as MSM_SPM_L2_MODE_*.
+ * Boot time only (it decides how lpm_levels counts the cores in sync):
+ * 0 = none (default), 2 = GDHS. Deeper modes are refused for now.
+ */
+static unsigned int tzpc_l2;
+module_param_named(l2, tzpc_l2, uint, 0444);
+static atomic_t tzpc_l2_entered = ATOMIC_INIT(0);
+module_param_named(l2_entered, tzpc_l2_entered.counter, int, 0444);
+
+int lumia_tzpc_l2_max(void)
 {
-	return 0;
+	if (!msm_tz_restricted() || tzpc_l2 < MSM_SPM_L2_MODE_GDHS)
+		return -1;
+	return MSM_SPM_L2_MODE_GDHS;
+}
+
+/*
+ * SCM flag for TERMINATE_PC. want is what lpm_levels asked for the last
+ * core (msm_pm_get_l2_flush_flag()); anything but an allowed GDHS becomes
+ * MSM_SCM_L2_ON (low nibble 0, the L2 stays on).
+ */
+unsigned int lumia_tzpc_l2_flag(unsigned int want)
+{
+	if (want == MSM_SCM_L2_GDHS && tzpc_enable &&
+	    lumia_tzpc_l2_max() >= MSM_SPM_L2_MODE_GDHS) {
+		atomic_inc(&tzpc_l2_entered);
+		return MSM_SCM_L2_GDHS;
+	}
+	return MSM_SCM_L2_ON;
 }
 
 void lumia_tzpc_before_pc(unsigned int cpu, unsigned long entry)

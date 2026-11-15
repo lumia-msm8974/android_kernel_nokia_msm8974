@@ -21,12 +21,15 @@ bool msm_tz_restricted_early(void);
  * (lumia-tzpc.c). All off unless the lumia_tzpc.enable parameter is set.
  */
 bool lumia_tzpc_cpu_allowed(unsigned int cpu);
-unsigned int lumia_tzpc_l2_flag(void);
+unsigned int lumia_tzpc_l2_flag(unsigned int want);
+/* Deepest L2 SPM mode (MSM_SPM_L2_MODE_*) allowed at boot, -1 for none */
+int lumia_tzpc_l2_max(void);
 #else
 static inline bool msm_tz_restricted(void) { return false; }
 static inline bool msm_tz_restricted_early(void) { return false; }
 static inline bool lumia_tzpc_cpu_allowed(unsigned int cpu) { return false; }
-static inline unsigned int lumia_tzpc_l2_flag(void) { return 0; }
+static inline unsigned int lumia_tzpc_l2_flag(unsigned int want) { return 0; }
+static inline int lumia_tzpc_l2_max(void) { return -1; }
 #endif
 
 #endif
