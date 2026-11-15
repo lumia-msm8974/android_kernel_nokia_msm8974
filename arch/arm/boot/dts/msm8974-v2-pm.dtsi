@@ -214,6 +214,8 @@
 			<50 172>, /* usb1_hs_async_wakeup_irq */
 			<53 104>, /* mdss_irq */
 			<62 222>, /* ee0_krait_hlos_spmi_periph_irq */
+			<0xff 18>,  /* APCx_qgicQTmrSecPhysIrptReq (as msm8974pro) */
+			<0xff 19>,  /* APCx_qgicQTmrNonSecPhysIrptReq (as msm8974pro) */
 			<0xff 33>,  /* APCC_qgicL2PerfMonIrptReq */
 			<0xff 34>,  /* APCC_qgicL2ErrorIrptReq */
 			<0xff 35>,  /* WDT_barkInt */
