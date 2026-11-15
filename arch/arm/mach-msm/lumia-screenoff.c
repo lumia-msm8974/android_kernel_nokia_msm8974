@@ -19,12 +19,17 @@
  *   always     0: drop them only while the screen is off (default),
  *              1: drop them now and keep them dropped
  *   max_freq   CPU frequency cap in kHz while the screen is off (0 = none)
+ *   doze_groups  the part of "groups" also dropped while the panel dozes
+ *              (always-on display); default bus and Krait voltages: the
+ *              display keeps scanning out and votes its own bandwidth, so
+ *              the multimedia clocks (MMSS) must stay
  *   delay_ms   wait after the screen goes off before dropping (default 2000)
  *
  * Every write is applied at once (groups not in the mask get their votes
  * back), so "echo 0 > groups" undoes everything. The screen state comes from
- * the FB_EVENT_BLANK notifier of fb0: only FB_BLANK_POWERDOWN counts as off
- * (doze states keep the votes). /sys/kernel/debug/lumia_screenoff lists the
+ * the FB_EVENT_BLANK notifier of fb0: FB_BLANK_POWERDOWN is off,
+ * FB_BLANK_VSYNC_SUSPEND and FB_BLANK_NORMAL (the MDSS low power states that
+ * Android's doze uses) are doze. /sys/kernel/debug/lumia_screenoff lists the
  * handoff votes and their state.
  */
 
@@ -46,13 +51,16 @@
 
 static DEFINE_MUTEX(screenoff_lock);
 static bool screenoff_ready;	/* set once boot is settled */
-static bool screen_off;
+enum { SCREEN_ON, SCREEN_DOZE, SCREEN_OFF };
+static const char *const screen_names[] = { "on", "doze", "off" };
+static int screen_state;
 static unsigned int applied_groups;
 static unsigned int applied_cap;	/* read by the cpufreq notifier */
 
 static unsigned int groups;
 static bool always;
 static unsigned int max_freq;
+static unsigned int doze_groups = HANDOFF_GRP_BUS | HANDOFF_GRP_KRAIT;
 static unsigned int delay_ms = 2000;
 
 static void screenoff_work_fn(struct work_struct *work);
@@ -73,17 +81,22 @@ static void screenoff_work_fn(struct work_struct *work)
 
 	mutex_lock(&screenoff_lock);
 
-	want = (always || screen_off) ? (groups & HANDOFF_GRP_ALL) : 0;
+	if (always || screen_state == SCREEN_OFF)
+		want = groups & HANDOFF_GRP_ALL;
+	else if (screen_state == SCREEN_DOZE)
+		want = groups & doze_groups & HANDOFF_GRP_ALL;
+	else
+		want = 0;
 	if (want != applied_groups) {
 		rc = msm_clock_handoff_set(want);
 		if (rc)
 			pr_err("handoff groups %#x: error %d\n", want, rc);
 		applied_groups = want;
 		pr_info("handoff votes dropped: %#x (screen %s)\n", want,
-			screen_off ? "off" : "on");
+			screen_names[screen_state]);
 	}
 
-	cap = screen_off ? max_freq : 0;
+	cap = screen_state == SCREEN_OFF ? max_freq : 0;
 	if (cap != applied_cap) {
 		ACCESS_ONCE(applied_cap) = cap;
 		get_online_cpus();
@@ -115,18 +128,29 @@ static int screenoff_fb_cb(struct notifier_block *nb, unsigned long event,
 			   void *data)
 {
 	struct fb_event *evdata = data;
-	bool off;
+	int state;
 
 	if (event != FB_EVENT_BLANK || !evdata || !evdata->data ||
 	    !evdata->info || evdata->info->node != 0)
 		return NOTIFY_DONE;
 
-	off = *(int *)evdata->data == FB_BLANK_POWERDOWN;
-	if (off == screen_off)
+	switch (*(int *)evdata->data) {
+	case FB_BLANK_POWERDOWN:
+		state = SCREEN_OFF;
+		break;
+	case FB_BLANK_VSYNC_SUSPEND:
+	case FB_BLANK_NORMAL:
+		state = SCREEN_DOZE;
+		break;
+	default:
+		state = SCREEN_ON;
+		break;
+	}
+	if (state == screen_state)
 		return NOTIFY_OK;
-	screen_off = off;
+	screen_state = state;
 	/* back to the firmware votes at once, drop them once settled */
-	screenoff_kick(off ? delay_ms : 0);
+	screenoff_kick(state == SCREEN_ON ? 0 : delay_ms);
 	return NOTIFY_OK;
 }
 
@@ -165,6 +189,8 @@ module_param_cb(always, &screenoff_param_ops, &always, 0644);
 MODULE_PARM_DESC(always, "drop them with the screen on too");
 module_param_cb(max_freq, &screenoff_param_ops, &max_freq, 0644);
 MODULE_PARM_DESC(max_freq, "CPU frequency cap with the screen off (kHz)");
+module_param_cb(doze_groups, &screenoff_param_ops, &doze_groups, 0644);
+MODULE_PARM_DESC(doze_groups, "part of groups also dropped while the panel dozes");
 module_param(delay_ms, uint, 0644);
 MODULE_PARM_DESC(delay_ms, "wait after screen off before dropping (ms)");
 
@@ -172,7 +198,7 @@ static int screenoff_show(struct seq_file *m, void *unused)
 {
 	mutex_lock(&screenoff_lock);
 	seq_printf(m, "screen %s, groups %#x, always %d, dropped %#x, cap %u kHz\n",
-		   screen_off ? "off" : "on", groups, always, applied_groups,
+		   screen_names[screen_state], groups, always, applied_groups,
 		   applied_cap);
 	mutex_unlock(&screenoff_lock);
 	seq_puts(m, "groups: 01 bus, 02 qdss, 04 gpu/ocmem, 08 mmss, 10 vdd_dig, 20 krait, 40 rest, 00 kept\n");
