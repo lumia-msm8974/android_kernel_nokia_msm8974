@@ -16,9 +16,17 @@
 bool msm_tz_restricted(void);
 /* Same check usable from ->reserve(), before the DT is unflattened */
 bool msm_tz_restricted_early(void);
+/*
+ * Experimental CPU power collapse through the Windows Phone firmware
+ * (lumia-tzpc.c). All off unless the lumia_tzpc.enable parameter is set.
+ */
+bool lumia_tzpc_cpu_allowed(unsigned int cpu);
+unsigned int lumia_tzpc_l2_flag(void);
 #else
 static inline bool msm_tz_restricted(void) { return false; }
 static inline bool msm_tz_restricted_early(void) { return false; }
+static inline bool lumia_tzpc_cpu_allowed(unsigned int cpu) { return false; }
+static inline unsigned int lumia_tzpc_l2_flag(void) { return 0; }
 #endif
 
 #endif

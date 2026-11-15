@@ -19,6 +19,7 @@
 #include "idle.h"
 #include "pm-boot.h"
 #include <mach/tz-restricted.h>
+#include "lumia-tzpc.h"
 
 static void (*msm_pm_boot_before_pc)(unsigned int cpu, unsigned long entry);
 static void (*msm_pm_boot_after_pc)(unsigned int cpu);
@@ -76,7 +77,15 @@ static int __init msm_pm_boot_init(void)
 	 * so no warm-boot vector is needed.
 	 */
 	if (msm_tz_restricted()) {
-		pr_info("pm-boot: TrustZone restricted, warm boot not configured\n");
+		/*
+		 * The firmware already programmed the warm boot address of
+		 * every core (its parking code); resume goes through the
+		 * parking mailbox. The hooks do nothing unless
+		 * lumia_tzpc.enable is set (lumia-tzpc.c).
+		 */
+		msm_pm_boot_before_pc = lumia_tzpc_before_pc;
+		msm_pm_boot_after_pc = lumia_tzpc_after_pc;
+		pr_info("pm-boot: TrustZone restricted, warm boot via the UEFI parking mailbox\n");
 		return 0;
 	}
 

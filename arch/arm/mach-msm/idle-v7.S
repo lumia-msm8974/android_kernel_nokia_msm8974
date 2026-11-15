@@ -51,6 +51,21 @@ skip_pc_debug3:
 
 3:	.long	.
 
+/*
+ * Nokia Lumia (Windows Phone firmware): warm boot after a power collapse.
+ * The UEFI park loop branches here in ARM state, MMU and caches off, with
+ * r0 = the core's mailbox. Give the mailbox back (id = idle) and go on as
+ * the TrustZone warm boot of Android would, through msm_pm_boot_entry.
+ * See lumia-tzpc.c.
+ */
+ENTRY(lumia_pm_boot_entry)
+	cpsid	aif
+	mvn	r1, #0
+	str	r1, [r0]		@ mailbox id back to idle
+	dsb
+	b	msm_pm_boot_entry
+ENDPROC(lumia_pm_boot_entry)
+
 	.data
 
 	.globl msm_pm_boot_vector
