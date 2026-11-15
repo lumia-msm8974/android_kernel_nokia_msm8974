@@ -783,8 +783,7 @@ bool msm_cpu_pm_check_mode(unsigned int cpu, enum msm_pm_sleep_mode mode,
 	 * lumia_tzpc.cpus, when lumia_tzpc.enable is set (lumia-tzpc.c).
 	 */
 	if (msm_tz_restricted() && mode != MSM_PM_SLEEP_MODE_WAIT_FOR_INTERRUPT &&
-	    !(mode == MSM_PM_SLEEP_MODE_POWER_COLLAPSE_STANDALONE &&
-	      lumia_tzpc_cpu_allowed(cpu)))
+	    !lumia_tzpc_mode_allowed(cpu, mode))
 		return false;
 
 	int idx = MSM_PM_MODE(cpu, mode);
@@ -814,8 +813,7 @@ int msm_cpu_pm_enter_sleep(enum msm_pm_sleep_mode mode, bool from_idle)
 			smp_processor_id(), __func__, mode);
 
 	if (msm_tz_restricted() &&
-	    !(mode == MSM_PM_SLEEP_MODE_POWER_COLLAPSE_STANDALONE &&
-	      lumia_tzpc_cpu_allowed(smp_processor_id())))
+	    !lumia_tzpc_mode_allowed(smp_processor_id(), mode))
 		mode = MSM_PM_SLEEP_MODE_WAIT_FOR_INTERRUPT;
 
 	if (from_idle)
