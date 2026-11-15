@@ -176,3 +176,56 @@ void lumia_tzpc_after_pc(unsigned int cpu)
 		}
 	}
 }
+
+#ifdef CONFIG_DEBUG_FS
+#include <linux/debugfs.h>
+#include <linux/seq_file.h>
+
+/*
+ * /sys/kernel/debug/lumia_tzpc_mailbox: read-only dump of the UEFI parking
+ * mailbox of every core: the first four words and the park loop at +0x800,
+ * which must start with "mov sl, pc" (e1a0a00f) before power collapse is tried.
+ */
+static int tzpc_mailbox_show(struct seq_file *m, void *unused)
+{
+	unsigned int cpu, i;
+
+	for (cpu = 0; cpu < 4; cpu++) {
+		void __iomem *box = lumia_park_mailbox(cpu);
+
+		if (!box) {
+			seq_printf(m, "cpu%u: no mailbox\n", cpu);
+			continue;
+		}
+		seq_printf(m, "cpu%u: +0 %08x +4 %08x +8 %08x +c %08x\n", cpu,
+			   readl_relaxed(box), readl_relaxed(box + 4),
+			   readl_relaxed(box + 8), readl_relaxed(box + 12));
+		seq_printf(m, "cpu%u: +800", cpu);
+		for (i = 0; i < 0x74; i += 4)
+			seq_printf(m, " %08x", readl_relaxed(box + 0x800 + i));
+		seq_puts(m, "\n");
+	}
+	return 0;
+}
+
+static int tzpc_mailbox_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, tzpc_mailbox_show, NULL);
+}
+
+static const struct file_operations tzpc_mailbox_fops = {
+	.open		= tzpc_mailbox_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= single_release,
+};
+
+static int __init tzpc_debugfs_init(void)
+{
+	if (msm_tz_restricted())
+		debugfs_create_file("lumia_tzpc_mailbox", 0400, NULL, NULL,
+				    &tzpc_mailbox_fops);
+	return 0;
+}
+late_initcall(tzpc_debugfs_init);
+#endif
