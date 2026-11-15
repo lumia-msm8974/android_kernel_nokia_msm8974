@@ -1037,6 +1037,15 @@ static int lpm_system_probe(struct platform_device *pdev)
 				goto fail;
 			}
 
+			/*
+			 * Lumia (lumia-tzpc.c): the cores never use the full
+			 * power collapse, the L2 SAW2 alone talks to the RPM.
+			 */
+			if (lumia_tzpc_l2_max() >= MSM_SPM_L2_MODE_POWER_COLLAPSE &&
+			    l->min_cpu_mode > MSM_PM_SLEEP_MODE_POWER_COLLAPSE_STANDALONE)
+				l->min_cpu_mode =
+					MSM_PM_SLEEP_MODE_POWER_COLLAPSE_STANDALONE;
+
 			if (l->min_cpu_mode < sys_state.sync_cpu_mode)
 				sys_state.sync_cpu_mode = l->min_cpu_mode;
 		}
