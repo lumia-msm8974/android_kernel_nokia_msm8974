@@ -37,11 +37,14 @@
  * the GDHS flag (3) to TERMINATE_PC. GDHS keeps the L2 contents, so
  * nothing is flushed.
  *
- * lumia_tzpc.l2=4 also allows the full power collapse of the cores (the
- * SAW2 sequence with the RPM handshake) and the lpm_levels system level
- * with the L2 off: the last core flushes the L2, passes flag 1 (as the
- * Windows PEP does), and lpm_levels sends the RPM sleep set and programs
- * the MPM, so that the RPM may shut XO down. The RPM tells whether it
+ * lumia_tzpc.l2=4 also allows the lpm_levels system level with the L2 off:
+ * the last core flushes the L2, passes flag 1 (as the Windows PEP does),
+ * and lpm_levels sends the RPM sleep set and programs the MPM, so that the
+ * RPM may shut XO down. As on Windows (SAW2 v2.1 tables of the PEP), the
+ * cores stay in standalone power collapse: only the L2 SAW2 does the RPM
+ * handshake. The full power collapse of a core (its SAW2 "pc" sequence
+ * with the RPM handshake, byte 07) hung the phone at once (15/11), so it
+ * is never used here. The RPM tells whether it
  * happened in /sys/kernel/debug/rpm_master_stats (APSS numshutdowns) and
  * rpm_stats (xosd, vmin).
  */
@@ -134,10 +137,7 @@ bool lumia_tzpc_mode_allowed(unsigned int cpu, int mode)
 {
 	if (!lumia_tzpc_cpu_allowed(cpu))
 		return false;
-	if (mode == MSM_PM_SLEEP_MODE_POWER_COLLAPSE_STANDALONE)
-		return true;
-	return mode == MSM_PM_SLEEP_MODE_POWER_COLLAPSE &&
-		lumia_tzpc_l2_max() >= MSM_SPM_L2_MODE_POWER_COLLAPSE;
+	return mode == MSM_PM_SLEEP_MODE_POWER_COLLAPSE_STANDALONE;
 }
 
 /*
