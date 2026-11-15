@@ -35,8 +35,15 @@
  * online cores are in standalone power collapse: it arms the L2 SAW2 with
  * the GDHS sequence (the same bytes as Windows) and the last core passes
  * the GDHS flag (3) to TERMINATE_PC. GDHS keeps the L2 contents, so
- * nothing is flushed. L2 power collapse, the RPM sleep set and XO shutdown
- * are not allowed yet.
+ * nothing is flushed.
+ *
+ * lumia_tzpc.l2=4 also allows the full power collapse of the cores (the
+ * SAW2 sequence with the RPM handshake) and the lpm_levels system level
+ * with the L2 off: the last core flushes the L2, passes flag 1 (as the
+ * Windows PEP does), and lpm_levels sends the RPM sleep set and programs
+ * the MPM, so that the RPM may shut XO down. The RPM tells whether it
+ * happened in /sys/kernel/debug/rpm_master_stats (APSS numshutdowns) and
+ * rpm_stats (xosd, vmin).
  */
 
 #include <linux/init.h>
@@ -104,18 +111,33 @@ bool lumia_tzpc_cpu_allowed(unsigned int cpu)
 /*
  * Deepest L2 low power mode lpm_levels may use, as MSM_SPM_L2_MODE_*.
  * Boot time only (it decides how lpm_levels counts the cores in sync):
- * 0 = none (default), 2 = GDHS. Deeper modes are refused for now.
+ * 0 = none (default), 2 = GDHS, 4 = also L2 power collapse with the RPM
+ * sleep set (XO shutdown).
  */
 static unsigned int tzpc_l2;
 module_param_named(l2, tzpc_l2, uint, 0444);
 static atomic_t tzpc_l2_entered = ATOMIC_INIT(0);
 module_param_named(l2_entered, tzpc_l2_entered.counter, int, 0444);
+static atomic_t tzpc_l2_off = ATOMIC_INIT(0);
+module_param_named(l2_off, tzpc_l2_off.counter, int, 0444);
 
 int lumia_tzpc_l2_max(void)
 {
 	if (!msm_tz_restricted() || tzpc_l2 < MSM_SPM_L2_MODE_GDHS)
 		return -1;
+	if (tzpc_l2 >= MSM_SPM_L2_MODE_POWER_COLLAPSE)
+		return MSM_SPM_L2_MODE_POWER_COLLAPSE;
 	return MSM_SPM_L2_MODE_GDHS;
+}
+
+bool lumia_tzpc_mode_allowed(unsigned int cpu, int mode)
+{
+	if (!lumia_tzpc_cpu_allowed(cpu))
+		return false;
+	if (mode == MSM_PM_SLEEP_MODE_POWER_COLLAPSE_STANDALONE)
+		return true;
+	return mode == MSM_PM_SLEEP_MODE_POWER_COLLAPSE &&
+		lumia_tzpc_l2_max() >= MSM_SPM_L2_MODE_POWER_COLLAPSE;
 }
 
 /*
@@ -125,10 +147,17 @@ int lumia_tzpc_l2_max(void)
  */
 unsigned int lumia_tzpc_l2_flag(unsigned int want)
 {
-	if (want == MSM_SCM_L2_GDHS && tzpc_enable &&
+	if (!tzpc_enable)
+		return MSM_SCM_L2_ON;
+	if (want == MSM_SCM_L2_GDHS &&
 	    lumia_tzpc_l2_max() >= MSM_SPM_L2_MODE_GDHS) {
 		atomic_inc(&tzpc_l2_entered);
 		return MSM_SCM_L2_GDHS;
+	}
+	if (want == MSM_SCM_L2_OFF &&
+	    lumia_tzpc_l2_max() >= MSM_SPM_L2_MODE_POWER_COLLAPSE) {
+		atomic_inc(&tzpc_l2_off);
+		return MSM_SCM_L2_OFF;
 	}
 	return MSM_SCM_L2_ON;
 }
