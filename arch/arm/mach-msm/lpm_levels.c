@@ -31,6 +31,7 @@
 #include "pm.h"
 #include "rpm-notifier.h"
 #include "spm.h"
+#include <mach/tz-restricted.h>
 #include "idle.h"
 
 #define SCLK_HZ (32768)
@@ -1039,6 +1040,13 @@ static int lpm_system_probe(struct platform_device *pdev)
 
 		l++;
 	}
+	/*
+	 * Restricted TrustZone (Lumia): never use a system level (L2 GDHS or
+	 * power collapse, RPM sleep set, MPM). Only the per-core standalone
+	 * power collapse of lumia-tzpc.c is possible, with the L2 left on.
+	 */
+	if (msm_tz_restricted())
+		sys_state.sync_cpu_mode = MSM_PM_SLEEP_MODE_NR;
 	sys_state.system_level = level;
 	sys_state.num_system_levels = num_levels;
 	sys_state.last_entered_cluster_index = -1;

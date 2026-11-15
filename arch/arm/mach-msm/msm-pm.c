@@ -494,6 +494,8 @@ static int msm_pm_collapse(unsigned long unused)
 	cpu_count++;
 	if (cpu_count == num_online_cpus())
 		flag = msm_pm_get_l2_flush_flag();
+	if (msm_tz_restricted())
+		flag = lumia_tzpc_l2_flag();	/* never touch the L2 here */
 
 	pr_debug("cpu:%d cores_in_pc:%d L2 flag: %d\n",
 			cpu, cpu_count, flag);
@@ -775,8 +777,14 @@ static enum msm_pm_time_stats_id (*execute[MSM_PM_SLEEP_MODE_NR])(bool idle) = {
 bool msm_cpu_pm_check_mode(unsigned int cpu, enum msm_pm_sleep_mode mode,
 		bool from_idle)
 {
-	/* Only WFI: every other mode goes through TrustZone */
-	if (msm_tz_restricted() && mode != MSM_PM_SLEEP_MODE_WAIT_FOR_INTERRUPT)
+	/*
+	 * Only WFI: every other mode goes through TrustZone. The one
+	 * exception is the standalone power collapse of the cores listed in
+	 * lumia_tzpc.cpus, when lumia_tzpc.enable is set (lumia-tzpc.c).
+	 */
+	if (msm_tz_restricted() && mode != MSM_PM_SLEEP_MODE_WAIT_FOR_INTERRUPT &&
+	    !(mode == MSM_PM_SLEEP_MODE_POWER_COLLAPSE_STANDALONE &&
+	      lumia_tzpc_cpu_allowed(cpu)))
 		return false;
 
 	int idx = MSM_PM_MODE(cpu, mode);
@@ -805,7 +813,9 @@ int msm_cpu_pm_enter_sleep(enum msm_pm_sleep_mode mode, bool from_idle)
 		pr_info("CPU%u: %s mode:%d\n",
 			smp_processor_id(), __func__, mode);
 
-	if (msm_tz_restricted())
+	if (msm_tz_restricted() &&
+	    !(mode == MSM_PM_SLEEP_MODE_POWER_COLLAPSE_STANDALONE &&
+	      lumia_tzpc_cpu_allowed(smp_processor_id())))
 		mode = MSM_PM_SLEEP_MODE_WAIT_FOR_INTERRUPT;
 
 	if (from_idle)

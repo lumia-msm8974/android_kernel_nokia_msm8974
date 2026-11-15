@@ -228,6 +228,14 @@ static void __iomem *bandit_mailbox(unsigned int cpu)
 	return bandit_park + (cpu_logical_map(cpu) + 1) * BANDIT_PARK_PAGE;
 }
 
+/* Mailbox of a core for lumia-tzpc.c, NULL until the SMP setup mapped it */
+void __iomem *lumia_park_mailbox(unsigned int cpu)
+{
+	if (!bandit_park || cpu_logical_map(cpu) > 3)
+		return NULL;
+	return bandit_mailbox(cpu);
+}
+
 static void __init bandit_park_prepare(void)
 {
 	unsigned int cpu;
