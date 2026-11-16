@@ -1139,6 +1139,8 @@ static void dequeue_rt_entity(struct sched_rt_entity *rt_se)
 /*
  * Adding/removing a task to/from a priority array:
  */
+DEFINE_PER_CPU(struct rt_util_data, rt_util);
+
 static void
 enqueue_task_rt(struct rq *rq, struct task_struct *p, int flags)
 {
@@ -1153,6 +1155,9 @@ enqueue_task_rt(struct rq *rq, struct task_struct *p, int flags)
 		enqueue_pushable_task(rq, p);
 
 	inc_nr_running(rq);
+
+	if (per_cpu(rt_util, cpu_of(rq)).func)
+		per_cpu(rt_util, cpu_of(rq)).func(cpu_of(rq), true, p);
 }
 
 static void dequeue_task_rt(struct rq *rq, struct task_struct *p, int flags)
@@ -1165,6 +1170,9 @@ static void dequeue_task_rt(struct rq *rq, struct task_struct *p, int flags)
 	dequeue_pushable_task(rq, p);
 
 	dec_nr_running(rq);
+
+	if (per_cpu(rt_util, cpu_of(rq)).func)
+		per_cpu(rt_util, cpu_of(rq)).func(cpu_of(rq), false, p);
 }
 
 /*

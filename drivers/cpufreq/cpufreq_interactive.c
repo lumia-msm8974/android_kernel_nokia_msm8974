@@ -127,6 +127,9 @@ static int timer_slack_val = DEFAULT_TIMER_SLACK;
 
 static bool io_is_busy;
 
+/* Run a CPU at policy->max while it runs a realtime user task (off by default) */
+static bool boost_rt_tasks;
+
 /*
  * If the max load among other CPUs is higher than up_threshold_any_cpu_load
  * and if the highest frequency among the other CPUs is higher than
@@ -388,6 +391,11 @@ static void cpufreq_interactive_timer(unsigned long data)
 	if (WARN_ON_ONCE(!delta_time))
 		goto rearm;
 
+	if (boost_rt_tasks && per_cpu(rt_util, data).active) {
+		new_freq = pcpu->policy->max;
+		goto rt_boost;
+	}
+
 	do_div(cputime_speedadj, delta_time);
 	loadadjfreq = (unsigned int)cputime_speedadj * 100;
 	cpu_load = loadadjfreq / pcpu->target_freq;
@@ -486,6 +494,7 @@ static void cpufreq_interactive_timer(unsigned long data)
 		pcpu->floor_validate_time = now;
 	}
 
+rt_boost:
 	if (pcpu->target_freq == new_freq) {
 		trace_cpufreq_interactive_already(
 			data, cpu_load, pcpu->target_freq,
@@ -1084,6 +1093,28 @@ static ssize_t store_io_is_busy(struct kobject *kobj,
 	return count;
 }
 
+static ssize_t show_boost_rt_tasks(struct kobject *kobj,
+			struct attribute *attr, char *buf)
+{
+	return sprintf(buf, "%u\n", boost_rt_tasks);
+}
+
+static ssize_t store_boost_rt_tasks(struct kobject *kobj,
+			struct attribute *attr, const char *buf, size_t count)
+{
+	int ret;
+	unsigned long val;
+
+	ret = kstrtoul(buf, 0, &val);
+	if (ret < 0)
+		return ret;
+	boost_rt_tasks = val;
+	return count;
+}
+
+static struct global_attr boost_rt_tasks_attr = __ATTR(boost_rt_tasks, 0644,
+		show_boost_rt_tasks, store_boost_rt_tasks);
+
 static struct global_attr io_is_busy_attr = __ATTR(io_is_busy, 0644,
 		show_io_is_busy, store_io_is_busy);
 
@@ -1169,6 +1200,7 @@ static struct attribute *interactive_attributes[] = {
 	&boostpulse.attr,
 	&boostpulse_duration.attr,
 	&io_is_busy_attr.attr,
+	&boost_rt_tasks_attr.attr,
 	&sampling_down_factor_attr.attr,
 	&sync_freq_attr.attr,
 	&up_threshold_any_cpu_load_attr.attr,
@@ -1195,6 +1227,24 @@ static int cpufreq_interactive_idle_notifier(struct notifier_block *nb,
 	}
 
 	return 0;
+}
+
+/*
+ * Called by the scheduler with the runqueue lock of @cpu held, when a realtime
+ * task is enqueued on or dequeued from @cpu. Only user tasks count (for
+ * example the UI thread and RenderThread with sys.use_fifo_ui): the SCHED_FIFO
+ * kernel threads of the display and GPU drivers run every frame and must not
+ * keep the CPU at its maximum. Only a flag is set here: the CPU's own timer
+ * applies it at the next evaluation (the timer is pinned and also re-armed
+ * from the idle path, so it is not touched from a remote runqueue).
+ */
+static void cpufreq_interactive_rt_boost_hook(int cpu, bool active,
+					      struct task_struct *p)
+{
+	if (!boost_rt_tasks || !p->mm || p == speedchange_task)
+		return;
+
+	per_cpu(rt_util, cpu).active = active;
 }
 
 static struct notifier_block cpufreq_interactive_idle_nb = {
@@ -1238,6 +1288,7 @@ static int cpufreq_governor_interactive(struct cpufreq_policy *policy,
 			cpufreq_interactive_timer_start(j, 0);
 			pcpu->governor_enabled = 1;
 			up_write(&pcpu->enable_sem);
+			per_cpu(rt_util, j).func = cpufreq_interactive_rt_boost_hook;
 		}
 
 		/*
@@ -1265,6 +1316,8 @@ static int cpufreq_governor_interactive(struct cpufreq_policy *policy,
 	case CPUFREQ_GOV_STOP:
 		mutex_lock(&gov_lock);
 		for_each_cpu(j, policy->cpus) {
+			per_cpu(rt_util, j).func = NULL;
+			per_cpu(rt_util, j).active = false;
 			pcpu = &per_cpu(cpuinfo, j);
 			down_write(&pcpu->enable_sem);
 			pcpu->governor_enabled = 0;
