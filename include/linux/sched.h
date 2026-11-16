@@ -135,6 +135,17 @@ extern void get_avenrun(unsigned long *loads, unsigned long offset, int shift);
 extern unsigned long total_forks;
 extern int nr_threads;
 DECLARE_PER_CPU(unsigned long, process_counts);
+
+/*
+ * Hook for a cpufreq governor that wants to know when a CPU starts or stops
+ * running a realtime task (set by the interactive governor, see
+ * boost_rt_tasks).
+ */
+struct rt_util_data {
+	void (*func)(int cpu, bool rt_active, struct task_struct *task);
+	bool active;
+};
+DECLARE_PER_CPU(struct rt_util_data, rt_util);
 extern int nr_processes(void);
 extern unsigned long nr_running(void);
 extern unsigned long nr_uninterruptible(void);
