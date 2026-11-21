@@ -34,8 +34,8 @@
 #include "avc_ss.h"
 #include "classmap.h"
 
-#define AVC_CACHE_SLOTS			512
-#define AVC_DEF_CACHE_THRESHOLD		512
+#define AVC_CACHE_SLOTS			2048
+#define AVC_DEF_CACHE_THRESHOLD		4096
 #define AVC_CACHE_RECLAIM		16
 
 #ifdef CONFIG_SECURITY_SELINUX_AVC_STATS
