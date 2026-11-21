@@ -20,6 +20,8 @@
 #include <linux/kernel.h>
 #include <linux/slab.h>
 #include <linux/errno.h>
+#include <linux/mm.h>
+#include <linux/vmalloc.h>
 #include "avtab.h"
 #include "policydb.h"
 
@@ -290,7 +292,10 @@ void avtab_destroy(struct avtab *h)
 		}
 		h->htable[i] = NULL;
 	}
-	kfree(h->htable);
+	if (is_vmalloc_addr(h->htable))
+		vfree(h->htable);
+	else
+		kfree(h->htable);
 	h->htable = NULL;
 	h->nslot = 0;
 	h->mask = 0;
@@ -324,7 +329,10 @@ int avtab_alloc(struct avtab *h, u32 nrules)
 		nslot = MAX_AVTAB_HASH_BUCKETS;
 	mask = nslot - 1;
 
-	h->htable = kcalloc(nslot, sizeof(*(h->htable)), GFP_KERNEL);
+	h->htable = kcalloc(nslot, sizeof(*(h->htable)),
+			    GFP_KERNEL | __GFP_NOWARN);
+	if (!h->htable)
+		h->htable = vzalloc(nslot * sizeof(*(h->htable)));
 	if (!h->htable)
 		return -ENOMEM;
 
