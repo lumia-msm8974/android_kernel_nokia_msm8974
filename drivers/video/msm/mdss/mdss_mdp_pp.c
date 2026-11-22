@@ -2539,6 +2539,16 @@ static void pcc_combine(struct mdp_pcc_cfg_data *raw,
 	r_en = raw && (raw->ops & MDP_PP_OPS_ENABLE);
 	u_en = user && (user->ops & MDP_PP_OPS_ENABLE);
 
+	/*
+	 * No calibration from the panel daemon: use the user matrix as it is.
+	 * The merge below keeps only the diagonal and clamps it to 1.0, which
+	 * would drop a full matrix such as the LiveDisplay saturation.
+	 */
+	if (u_en && !r_en) {
+		memcpy(real, user, sizeof(struct mdp_pcc_cfg_data));
+		return;
+	}
+
 	// user configuration may change often, but the raw configuration
 	// will correspond to calibration data which should only change if
 	// there is a mode switch. we only care about the base
