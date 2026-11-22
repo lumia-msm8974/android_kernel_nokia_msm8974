@@ -62,6 +62,9 @@
 
 #include <asm/io.h>
 #include <asm/pgalloc.h>
+#include <linux/moduleparam.h>
+#include <linux/log2.h>
+
 #include <asm/uaccess.h>
 #include <asm/tlb.h>
 #include <asm/tlbflush.h>
@@ -3293,6 +3296,97 @@ oom:
  * but allow concurrent faults), and pte neither mapped nor locked.
  * We return with mmap_sem still held, but pte unmapped and unlocked.
  */
+/*
+ * Fault-around, from Linux 3.15 (mm: introduce vm_ops->map_pages() and
+ * mm: implement ->map_pages for page cache): on a read fault of a file
+ * mapping, also map the pages around the faulting address that are already
+ * up to date in the page cache, so that the next accesses do not fault. App
+ * starts on Android touch tens of thousands of such pages (code and data of
+ * .oat, .so and .apk files), one fault each without this.
+ * fault_around_bytes: 64 KiB (16 pages) as in mainline; PAGE_SIZE or less
+ * turns it off.
+ */
+static unsigned long fault_around_bytes __read_mostly = 65536;
+module_param(fault_around_bytes, ulong, 0644);
+
+static inline unsigned long fault_around_pages(void)
+{
+	unsigned long bytes = ACCESS_ONCE(fault_around_bytes);
+
+	if (bytes < 2 * PAGE_SIZE)
+		return 1;
+	bytes = rounddown_pow_of_two(bytes);
+	return min_t(unsigned long, bytes >> PAGE_SHIFT, PTRS_PER_PTE);
+}
+
+static inline unsigned long fault_around_mask(unsigned long pages)
+{
+	return ~((pages << PAGE_SHIFT) - 1) & PAGE_MASK;
+}
+
+void do_set_pte(struct vm_area_struct *vma, unsigned long address,
+		struct page *page, pte_t *pte, bool write, bool anon)
+{
+	pte_t entry;
+
+	flush_icache_page(vma, page);
+	entry = mk_pte(page, vma->vm_page_prot);
+	if (write)
+		entry = maybe_mkwrite(pte_mkdirty(entry), vma);
+	if (anon) {
+		inc_mm_counter_fast(vma->vm_mm, MM_ANONPAGES);
+		page_add_new_anon_rmap(page, vma, address);
+	} else {
+		inc_mm_counter_fast(vma->vm_mm, MM_FILEPAGES);
+		page_add_file_rmap(page);
+	}
+	set_pte_at(vma->vm_mm, address, pte, entry);
+
+	/* no need to invalidate: a not-present page won't be cached */
+	update_mmu_cache(vma, address, pte);
+}
+
+static void do_fault_around(struct vm_area_struct *vma, unsigned long address,
+		pte_t *pte, pgoff_t pgoff, unsigned int flags)
+{
+	unsigned long pages = fault_around_pages();
+	unsigned long start_addr;
+	pgoff_t max_pgoff;
+	struct vm_fault vmf;
+	int off;
+
+	start_addr = max(address & fault_around_mask(pages), vma->vm_start);
+	off = ((address - start_addr) >> PAGE_SHIFT) & (PTRS_PER_PTE - 1);
+	pte -= off;
+	pgoff -= off;
+
+	/*
+	 * max_pgoff is either end of page table or end of vma or
+	 * fault_around_pages() from pgoff, depending what is nearest.
+	 */
+	max_pgoff = pgoff - ((start_addr >> PAGE_SHIFT) & (PTRS_PER_PTE - 1)) +
+		PTRS_PER_PTE - 1;
+	max_pgoff = min3(max_pgoff, vma_pages(vma) + vma->vm_pgoff - 1,
+			pgoff + pages - 1);
+
+	/* Check if it makes any sense to call ->map_pages */
+	while (!pte_none(*pte)) {
+		if (++pgoff > max_pgoff)
+			return;
+		start_addr += PAGE_SIZE;
+		if (start_addr >= vma->vm_end)
+			return;
+		pte++;
+	}
+
+	vmf.virtual_address = (void __user *) start_addr;
+	vmf.pte = pte;
+	vmf.pgoff = pgoff;
+	vmf.max_pgoff = max_pgoff;
+	vmf.flags = flags;
+	vma->vm_ops->map_pages(vma, &vmf);
+}
+
 static int __do_fault(struct mm_struct *mm, struct vm_area_struct *vma,
 		unsigned long address, pmd_t *pmd,
 		pgoff_t pgoff, unsigned int flags, pte_t orig_pte)
@@ -3489,6 +3583,24 @@ static int do_linear_fault(struct mm_struct *mm, struct vm_area_struct *vma,
 	/* The VMA was not fully populated on mmap() or missing VM_DONTEXPAND */
 	if (!vma->vm_ops->fault)
 		return VM_FAULT_SIGBUS;
+
+	/*
+	 * Read fault on a file mapping: map the pages around it that are
+	 * already in the page cache. If that also mapped the faulting page,
+	 * the fault is done.
+	 */
+	if (!(flags & FAULT_FLAG_WRITE) && vma->vm_ops->map_pages &&
+	    fault_around_pages() > 1) {
+		spinlock_t *ptl;
+		pte_t *pte = pte_offset_map_lock(mm, pmd, address, &ptl);
+
+		do_fault_around(vma, address, pte, pgoff, flags);
+		if (!pte_same(*pte, orig_pte)) {
+			pte_unmap_unlock(pte, ptl);
+			return 0;
+		}
+		pte_unmap_unlock(pte, ptl);
+	}
 	return __do_fault(mm, vma, address, pmd, pgoff, flags, orig_pte);
 }
 
