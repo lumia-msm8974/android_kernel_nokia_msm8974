@@ -16,8 +16,11 @@
  * standby; 0x08 holds the fault flags. Chips 0x6x first get 0x07 = 0x02.
  * GPIO 84 is the IC's torch/strobe input; it is not driven here.
  *
- * The camera daemon keeps LED_HIGH until the snapshot frame is out, so the
- * flash timeout (flash_ms, default 200 ms) is much longer than on the
+ * The camera daemon keeps LED_HIGH until the snapshot frame is out, about
+ * four preview frames later (400 ms and more in a dark room), and the LED
+ * must still be on then. So the flash timeout (flash_ms, default 512 ms, the
+ * longest the IC has; LED_OFF normally ends the pulse first) is much longer
+ * than on the
  * original platform, which fires synchronised pulses of at most 40 ms
  * (main) and 80 ms (pre). For that reason the main currents are off by
  * default (flash_main=0): LED_HIGH uses the preflash setting until the
@@ -44,7 +47,7 @@
 static bool flash_main;
 module_param(flash_main, bool, 0644);
 MODULE_PARM_DESC(flash_main, "LED_HIGH with the main flash currents (else preflash)");
-static int flash_ms = 200;
+static int flash_ms = 512;
 module_param(flash_ms, int, 0644);
 MODULE_PARM_DESC(flash_ms, "flash timeout for LED_HIGH, ms (2-512)");
 
