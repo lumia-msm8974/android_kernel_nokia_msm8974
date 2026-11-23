@@ -44,7 +44,7 @@
 static bool flash_main;
 module_param(flash_main, bool, 0644);
 MODULE_PARM_DESC(flash_main, "LED_HIGH with the main flash currents (else preflash)");
-static int flash_ms = 200;
+static int flash_ms = 512;
 module_param(flash_ms, int, 0644);
 MODULE_PARM_DESC(flash_ms, "flash timeout for LED_HIGH, ms (2-512)");
 
