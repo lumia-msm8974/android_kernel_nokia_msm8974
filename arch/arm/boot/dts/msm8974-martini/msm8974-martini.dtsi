@@ -917,6 +917,13 @@
 	qcom,max-bandwidth-low-kbps = <4500000>;
 	qcom,max-bandwidth-high-kbps = <4500000>;
 
+	/*
+	 * A rotated 1080p video layer needs at least 240 MHz: at the 200 MHz the
+	 * default factor computes, the interface underruns on every frame and the
+	 * panel shows the blue underflow color.
+	 */
+	qcom,mdss-clk-factor = <4 3>;
+
 	dsi_martini_amoled_video: qcom,mdss_dsi_martini_amoled_video {
 		qcom,mdss-dsi-panel-name = "martini 1080p amoled video";
 		qcom,mdss-dsi-panel-controller = <&mdss_dsi0>;
