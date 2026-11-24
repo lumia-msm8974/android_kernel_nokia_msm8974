@@ -73,7 +73,11 @@ int find_vdd_level(struct clk *clk, unsigned long rate);
 #define HANDOFF_GRP_VDD_DIG	BIT(4)	/* vdd_dig (CX) held at its top corner */
 #define HANDOFF_GRP_KRAIT	BIT(5)	/* Krait, L2, HFPLL voltages at max */
 #define HANDOFF_GRP_REST	BIT(6)	/* every other GCC clock */
-#define HANDOFF_GRP_ALL		0x7f
+#define HANDOFF_GRP_XO		BIT(7)	/* cxo_clk_src and its branch voters */
+#define HANDOFF_GRP_XO_BUF	BIT(8)	/* XO buffers that also vote in the sleep set */
+#define HANDOFF_GRP_CE1		BIT(9)	/* crypto engine 1, its last path to XO */
+#define HANDOFF_GRP_XO_PATH	BIT(10)	/* the rest of the GCC votes that sit on XO */
+#define HANDOFF_GRP_ALL		0x7ff
 #define HANDOFF_GRP_KEEP	BIT(31)	/* never dropped */
 
 struct seq_file;

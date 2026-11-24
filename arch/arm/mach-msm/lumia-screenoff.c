@@ -21,6 +21,12 @@
  *   max_freq   CPU frequency cap in kHz while the screen is off (0 = none)
  *   delay_ms   wait after the screen goes off before dropping (default 2000)
  *
+ * With the XO groups (0x80 XO voters, 0x200 CE1, 0x400 the GCC votes on the
+ * XO path) on top of the usual 0x29, no apps vote is left on XO while the
+ * screen is off and the RPM can shut it down: groups 0x6a9 did so on the 930
+ * with the ADSP still sleeping. Never 0x40 with them: it also drops the
+ * configuration clocks of OCMEM and the ADSP and leaves the ADSP awake.
+ *
  * Every write is applied at once (groups not in the mask get their votes
  * back), so "echo 0 > groups" undoes everything. The screen state comes from
  * the FB_EVENT_BLANK notifier of fb0: only FB_BLANK_POWERDOWN counts as off
@@ -175,7 +181,7 @@ static int screenoff_show(struct seq_file *m, void *unused)
 		   screen_off ? "off" : "on", groups, always, applied_groups,
 		   applied_cap);
 	mutex_unlock(&screenoff_lock);
-	seq_puts(m, "groups: 01 bus, 02 qdss, 04 gpu/ocmem, 08 mmss, 10 vdd_dig, 20 krait, 40 rest, 00 kept\n");
+	seq_puts(m, "groups: 01 bus, 02 qdss, 04 gpu/ocmem, 08 mmss, 10 vdd_dig, 20 krait, 40 rest, 80 xo, 100 xo buffers, 200 ce1, 400 xo path, 00 kept\n");
 	msm_clock_handoff_show(m);
 	return 0;
 }
