@@ -929,6 +929,33 @@ static const char * const handoff_keep_prefix[] = {
 	"gcc_xo", NULL,
 };
 
+/*
+ * The handoff enables of XO itself keep its sleep set vote on, so the RPM can
+ * never shut it down. Dropping them leaves every real driver vote in place.
+ * The active-only clocks (cxo_a_clk_src, *_a_pin) do not vote in the sleep set
+ * and stay in the group above.
+ */
+static const char * const handoff_xo_names[] = {
+	"cxo_clk_src", "cxo_otg_clk", "cxo_pil_lpass_clk", "cxo_pil_mss_clk",
+	"cxo_pil_pronto_clk", "cxo_wlan_clk", "cxo_dwc3_clk",
+	"cxo_ehci_host_clk", "cxo_lpm_clk", NULL,
+};
+
+/* Kept apart: external chips may use these buffers without a vote */
+static const char * const handoff_xo_buf_names[] = {
+	"cxo_a2", "div_clk1", "div_clk2", "diff_clk", NULL,
+};
+
+/*
+ * The TrustZone votes for CE1 in its own branch vote register around its
+ * work, so the apps vote is not needed. It does not vote for GPLL0, which
+ * stays on through the active-only gpll0_ao_clk_src while a CPU runs.
+ */
+static const char * const handoff_ce1_names[] = {
+	"ce1_clk_src", "gcc_ce1_clk", "gcc_ce1_ahb_clk", "gcc_ce1_axi_clk",
+	NULL,
+};
+
 static const char * const handoff_bus_names[] = {
 	"pnoc_clk", "pnoc_a_clk", "snoc_clk", "snoc_a_clk",
 	"cnoc_clk", "cnoc_a_clk", "bimc_clk", "bimc_a_clk",
@@ -954,10 +981,35 @@ static const char * const handoff_mmss_prefix[] = {
 	"byte", "pclk", "esc", "vsync", "dsi", "hdmi", "edp", "extpclk", NULL,
 };
 
+/*
+ * Whether the clock currently feeds from XO (cxo_clk_src) through its parents.
+ * The GCC handoff votes left by the UEFI that do (the BLSP, SDCC and USB
+ * sources on GPLL0) keep the XO sleep vote up; the others (configuration AHB
+ * clocks of OCMEM, MMSS, the modem and the ADSP) do not, and dropping those
+ * left the ADSP awake for good on the 930.
+ */
+static bool handoff_on_xo_path(struct clk *c)
+{
+	int depth;
+
+	for (depth = 0; c && depth < 16; c = c->parent, depth++)
+		if (c->dbg_name && !strcmp(c->dbg_name, "cxo_clk_src"))
+			return true;
+	return false;
+}
+
 static unsigned int handoff_clk_group(struct clk *c)
 {
 	const char *n = c->dbg_name;
 
+	if (n && name_in(n, handoff_xo_names))
+		return HANDOFF_GRP_XO;
+	if (n && name_in(n, handoff_xo_buf_names))
+		return HANDOFF_GRP_XO_BUF;
+	if (n && name_in(n, handoff_ce1_names))
+		return HANDOFF_GRP_CE1;
+	if (n && !strcmp(n, "gpll0_ao_clk_src"))
+		return HANDOFF_GRP_KEEP;
 	if (!n || name_prefix(n, handoff_keep_prefix))
 		return HANDOFF_GRP_KEEP;
 	if (name_in(n, handoff_bus_names))
@@ -969,6 +1021,8 @@ static unsigned int handoff_clk_group(struct clk *c)
 	if (name_prefix(n, handoff_mmss_prefix))
 		/* simple-framebuffer: the UEFI pipe needs them, nobody votes */
 		return handoff_keep_mmss ? HANDOFF_GRP_KEEP : HANDOFF_GRP_MMSS;
+	if (handoff_on_xo_path(c))
+		return HANDOFF_GRP_XO_PATH;
 	return HANDOFF_GRP_REST;
 }
 
