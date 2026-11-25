@@ -399,6 +399,29 @@
 	};
 };
 
+/*
+ * Board thermistors, from the ADC1 (QCOM240F) channel table of the stock
+ * DSDT: SYS_THERM1 = PM8941 AMUX 0xb3, SYS_THERM2 = 0xb4, PA_THERM = 0xb5,
+ * PA_THERM1 = 0xb7, SYS_THERM3 = 0xb8, as on the Lumia 930. Windows runs
+ * its skin thermal zones on SYS_THERM2 (53-62 C: display, charging, CPU,
+ * camera; critical at 70 C) and one zone on PA_THERM (75 C); PA_THERM1 has
+ * no zone and reads -40 C here.
+ *
+ * The msm8974 thermal-engine blob reads ADC thermistors only through the
+ * thermal zones named "pa_therm0" and "pa_therm1". Give the SYS_THERM2
+ * zone, "emmc_therm" in the common file, the "pa_therm1" name so that skin
+ * rules can use it, and rename the PA_THERM1 zone, which nothing uses.
+ */
+&pm8941_adc_tm {
+	chan@b4 {
+		label = "pa_therm1";	/* SYS_THERM2, skin */
+	};
+
+	chan@b7 {
+		label = "pa1_therm";	/* PA_THERM1 */
+	};
+};
+
 &pm8941_gpios {
 	gpio@c200 { /* GPIO 3: camera snapshot */
 		qcom,mode = <0>;
