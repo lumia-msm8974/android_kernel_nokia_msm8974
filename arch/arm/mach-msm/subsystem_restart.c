@@ -459,6 +459,18 @@ static void subsystem_ramdump(struct subsys_device *dev, void *data)
 	dev->do_ramdump_on_put = false;
 }
 
+/*
+ * One subsystem image load at a time. On the Lumia 1520 the modem start (the
+ * MBA, then the modem image that the Windows Phone TrustZone decrypts segment
+ * by segment, about 10 s) ended with "MBA returned error -19" when Venus made
+ * its own PAS calls in the middle of it, and the phone hung right after.
+ * The modem, ADSP and WCNSS already start one after the other; Venus starts
+ * when the first video instance is opened, at any time. A start or powerup
+ * now waits until the one before has brought its peripheral out of reset.
+ * The wait for the error-ready interrupt stays outside the lock.
+ */
+static DEFINE_MUTEX(subsys_load_lock);
+
 static void subsystem_powerup(struct subsys_device *dev, void *data)
 {
 	const char *name = dev->desc->name;
@@ -467,7 +479,10 @@ static void subsystem_powerup(struct subsys_device *dev, void *data)
 	pr_info("[%p]: Powering up %s\n", current, name);
 	init_completion(&dev->err_ready);
 
-	if (dev->desc->powerup(dev->desc) < 0) {
+	mutex_lock(&subsys_load_lock);
+	ret = dev->desc->powerup(dev->desc);
+	mutex_unlock(&subsys_load_lock);
+	if (ret < 0) {
 		notify_each_subsys_device(&dev, 1, SUBSYS_POWERUP_FAILURE,
 								NULL);
 		panic("[%p]: Powerup error: %s!", current, name);
@@ -506,7 +521,9 @@ static int subsys_start(struct subsys_device *subsys)
 	int ret;
 
 	init_completion(&subsys->err_ready);
+	mutex_lock(&subsys_load_lock);
 	ret = subsys->desc->start(subsys->desc);
+	mutex_unlock(&subsys_load_lock);
 	if (ret){
 		notify_each_subsys_device(&subsys, 1, SUBSYS_POWERUP_FAILURE,
 									NULL);
